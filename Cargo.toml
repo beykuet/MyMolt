@@ -2,7 +2,7 @@
 name = "mymolt-core"
 version = "0.1.0"
 edition = "2021"
-authors = ["MyMolt Contributors", "theonlyhennygod"]
+authors = ["MyMolt Contributors", "benjaminkuettner"]
 license = "EUPL-1.2"
 description = "MyMolt Core - The sovereign, EU-compliant AI agent infrastructure based on ZeroClaw."
 repository = "https://github.com/beykuet/MyMolt"
@@ -60,9 +60,6 @@ hex = "0.4"
 # Landlock (Linux sandbox) - optional dependency
 landlock = { version = "0.4", optional = true }
 
-# Async traits
-async-trait = "0.1"
-
 # Memory / persistence
 rusqlite = { version = "0.38", features = ["bundled"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
@@ -87,15 +84,21 @@ tokio-rustls = "0.26.4"
 webpki-roots = "1.0.6"
 
 # HTTP server (gateway) — replaces raw TCP for proper HTTP/1.1 compliance
-axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "query"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "query", "ws", "multipart"] }
 tower = { version = "0.5", default-features = false }
-tower-http = { version = "0.6", default-features = false, features = ["limit", "timeout"] }
+tower-http = { version = "0.6", default-features = false, features = ["cors", "fs", "limit", "timeout"] }
 http-body-util = "0.1"
 
 # OpenTelemetry — OTLP trace + metrics export
 opentelemetry = { version = "0.31", default-features = false, features = ["trace", "metrics"] }
 opentelemetry_sdk = { version = "0.31", default-features = false, features = ["trace", "metrics"] }
 opentelemetry-otlp = { version = "0.31", default-features = false, features = ["trace", "metrics", "http-proto", "reqwest-blocking-client"] }
+k256 = { version = "0.13.4", features = ["ecdsa", "serde", "pem"] }
+jsonwebtoken = { version = "10.3.0", default-features = false, features = ["use_pem"] }
+rand = "0.8"
+futures = "0.3.32"
+serde_urlencoded = "0.7.1"
+async-trait = "0.1.89"
 
 [features]
 default = []

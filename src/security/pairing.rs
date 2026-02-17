@@ -11,6 +11,7 @@
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 /// Maximum failed pairing attempts before lockout.
@@ -26,7 +27,7 @@ const PAIR_LOCKOUT_SECS: u64 = 300; // 5 minutes
 #[derive(Debug)]
 pub struct PairingGuard {
     /// Whether pairing is required at all.
-    require_pairing: bool,
+    require_pairing: AtomicBool,
     /// One-time pairing code (generated on startup, consumed on first pair).
     pairing_code: Mutex<Option<String>>,
     /// Set of SHA-256 hashed bearer tokens (persisted across restarts).
@@ -61,7 +62,7 @@ impl PairingGuard {
             None
         };
         Self {
-            require_pairing,
+            require_pairing: AtomicBool::new(require_pairing),
             pairing_code: Mutex::new(code),
             paired_tokens: Mutex::new(tokens),
             failed_attempts: Mutex::new((0, None)),
@@ -78,7 +79,12 @@ impl PairingGuard {
 
     /// Whether pairing is required at all.
     pub fn require_pairing(&self) -> bool {
-        self.require_pairing
+        self.require_pairing.load(Ordering::Relaxed)
+    }
+
+    /// Set whether pairing is required.
+    pub fn set_pairing_required(&self, required: bool) {
+        self.require_pairing.store(required, Ordering::Relaxed);
     }
 
     /// Attempt to pair with the given code. Returns a bearer token on success.
@@ -147,7 +153,7 @@ impl PairingGuard {
 
     /// Check if a bearer token is valid (compares against stored hashes).
     pub fn is_authenticated(&self, token: &str) -> bool {
-        if !self.require_pairing {
+        if !self.require_pairing.load(Ordering::Relaxed) {
             return true;
         }
         let hashed = hash_token(token);

@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MyMolt Core</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background: #f0f2f5;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+
+        .card {
+            background: white;
+            padding: 2rem;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            width: 100%;
+            max-width: 400px;
+            text-align: center;
+        }
+
+        .status {
+            font-weight: bold;
+            color: #10b981;
+        }
+
+        .error {
+            color: #ef4444;
+        }
+
+        pre {
+            background: #f3f4f6;
+            padding: 1rem;
+            border-radius: 8px;
+            overflow-x: auto;
+            text-align: left;
+            font-size: 0.85rem;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="card">
+        <h1>🦎 MyMolt Core</h1>
+        <p>Backend Status: <span id="status" class="status">Connecting...</span></p>
+        <div id="pairing-section"
+            style="display:none; margin-top: 1rem; border-top: 1px solid #eee; padding-top: 1rem;">
+            <input type="text" id="pairing-code" placeholder="Enter Pairing Code (e.g., 123456)"
+                style="padding: 8px; width: 180px; text-align: center; border: 1px solid #ccc; border-radius: 4px;">
+            <button onclick="pair()"
+                style="padding: 8px 16px; background: #2563eb; color: white; border: none; border-radius: 4px; cursor: pointer;">Pair</button>
+            <p id="pair-msg" style="font-size: 0.8rem; margin-top: 5px;"></p>
+        </div>
+        <div id="details"></div>
+    </div>
+    <script>
+        const API_URL = 'http://127.0.0.1:8080';
+        let authToken = localStorage.getItem('mymolt_token');
+
+        async function post(url, headers = {}) {
+            return await fetch(url, { method: 'POST', headers });
+        }
+
+        async function checkHealth() {
+            try {
+                const res = await fetch(`${API_URL}/health`);
+                const data = await res.json();
+
+                const isPaired = data.paired || authToken;
+                document.getElementById('status').innerText = isPaired ? 'Online & Paired 🔐' : 'Online (Unpaired) 🟢';
+                document.getElementById('details').innerHTML = `<pre>${JSON.stringify(data, null, 2)}</pre>`;
+
+                if (!isPaired && !authToken) {
+                    document.getElementById('pairing-section').style.display = 'block';
+                } else {
+                    document.getElementById('pairing-section').style.display = 'none';
+                }
+
+            } catch (e) {
+                document.getElementById('status').innerText = 'Offline 🔴';
+                document.getElementById('status').className = 'error';
+                document.getElementById('details').innerHTML = '<p>Ensure the daemon is running:<br><code>cargo run -- daemon</code></p>';
+            }
+        }
+
+        async function pair() {
+            const code = document.getElementById('pairing-code').value;
+            const msg = document.getElementById('pair-msg');
+            msg.innerText = "Pairing...";
+
+            try {
+                const res = await post(`${API_URL}/pair`, { 'X-Pairing-Code': code });
+                if (res.ok) {
+                    const data = await res.json();
+                    authToken = data.token;
+                    localStorage.setItem('mymolt_token', authToken);
+                    msg.innerText = "Success!";
+                    msg.style.color = "green";
+                    setTimeout(checkHealth, 1000);
+                } else {
+                    const err = await res.json();
+                    msg.innerText = "Error: " + (err.error || "Failed");
+                    msg.style.color = "red";
+                }
+            } catch (e) {
+                msg.innerText = "Network Error";
+                msg.style.color = "red";
+            }
+        }
+
+        checkHealth();
+        setInterval(checkHealth, 5000);
+    </script>
+</body>
+
+</html>

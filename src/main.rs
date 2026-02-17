@@ -65,12 +65,12 @@ mod util;
 
 use config::Config;
 
-/// `ZeroClaw` - Zero overhead. Zero compromise. 100% Rust.
+/// `MyMolt Core` - The sovereign, EU-compliant AI agent infrastructure.
 #[derive(Parser, Debug)]
-#[command(name = "zeroclaw")]
-#[command(author = "theonlyhennygod")]
+#[command(name = "mymolt")]
+#[command(author = "MyMolt Contributors")]
 #[command(version = "0.1.0")]
-#[command(about = "The fastest, smallest AI assistant.", long_about = None)]
+#[command(about = "The sovereign AI agent infrastructure.", long_about = None)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -345,7 +345,7 @@ async fn main() -> Result<()> {
             onboard::run_quick_setup(api_key.as_deref(), provider.as_deref(), memory.as_deref())?
         };
         // Auto-start channels if user said yes during wizard
-        if std::env::var("ZEROCLAW_AUTOSTART_CHANNELS").as_deref() == Ok("1") {
+        if std::env::var("MYMOLT_AUTOSTART_CHANNELS").as_deref() == Ok("1") {
             channels::start_channels(config).await?;
         }
         return Ok(());
@@ -368,24 +368,24 @@ async fn main() -> Result<()> {
 
         Commands::Gateway { port, host } => {
             if port == 0 {
-                info!("🚀 Starting ZeroClaw Gateway on {host} (random port)");
+                info!("🚀 Starting MyMolt Gateway on {host} (random port)");
             } else {
-                info!("🚀 Starting ZeroClaw Gateway on {host}:{port}");
+                info!("🚀 Starting MyMolt Gateway on {host}:{port}");
             }
             gateway::run_gateway(&host, port, config).await
         }
 
         Commands::Daemon { port, host } => {
             if port == 0 {
-                info!("🧠 Starting ZeroClaw Daemon on {host} (random port)");
+                info!("🧠 Starting MyMolt Daemon on {host} (random port)");
             } else {
-                info!("🧠 Starting ZeroClaw Daemon on {host}:{port}");
+                info!("🧠 Starting MyMolt Daemon on {host}:{port}");
             }
             daemon::run(config, host, port).await
         }
 
         Commands::Status => {
-            println!("🦀 ZeroClaw Status");
+            println!("🇪🇺 MyMolt Core Status");
             println!();
             println!("Version:     {}", env!("CARGO_PKG_VERSION"));
             println!("Workspace:   {}", config.workspace_dir.display());

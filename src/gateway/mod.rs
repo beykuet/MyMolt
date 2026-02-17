@@ -9,6 +9,8 @@
 
 use crate::channels::{Channel, WhatsAppChannel};
 use crate::config::Config;
+
+pub mod api;
 use crate::memory::{self, Memory, MemoryCategory};
 use crate::observability::{self, Observer};
 use crate::providers::{self, ChatMessage, Provider};
@@ -207,6 +209,7 @@ pub struct AppState {
     pub whatsapp: Option<Arc<WhatsAppChannel>>,
     /// `WhatsApp` app secret for webhook signature verification (`X-Hub-Signature-256`)
     pub whatsapp_app_secret: Option<Arc<str>>,
+    pub soul: Arc<Mutex<crate::identity::Soul>>,
 }
 
 /// Run the HTTP gateway using axum with proper HTTP/1.1 compliance.
@@ -307,7 +310,7 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
 
     // WhatsApp app secret for webhook signature verification
     // Priority: environment variable > config file
-    let whatsapp_app_secret: Option<Arc<str>> = std::env::var("ZEROCLAW_WHATSAPP_APP_SECRET")
+    let whatsapp_app_secret: Option<Arc<str>> = std::env::var("MYMOLT_WHATSAPP_APP_SECRET")
         .ok()
         .and_then(|secret| {
             let secret = secret.trim();
@@ -401,7 +404,15 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         idempotency_store,
         whatsapp: whatsapp_channel,
         whatsapp_app_secret,
+        soul: Arc::new(Mutex::new({
+            let mut s = crate::identity::Soul::new(&config.workspace_dir);
+            if let Err(e) = s.load() {
+                tracing::warn!("Failed to load Soul: {e}");
+            }
+            s
+        })),
     };
+
 
     // Build router with middleware
     let app = Router::new()
@@ -410,14 +421,26 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         .route("/webhook", post(handle_webhook))
         .route("/whatsapp", get(handle_whatsapp_verify))
         .route("/whatsapp", post(handle_whatsapp_message))
+        .merge(api::routes()) // Merge API routes
         .with_state(state)
         .layer(RequestBodyLimitLayer::new(MAX_BODY_SIZE))
         .layer(TimeoutLayer::with_status_code(
             StatusCode::REQUEST_TIMEOUT,
             Duration::from_secs(REQUEST_TIMEOUT_SECS),
-        ));
+        ))
+        .layer(
+            tower_http::cors::CorsLayer::new()
+                .allow_origin(tower_http::cors::Any)
+                .allow_methods(tower_http::cors::Any)
+                .allow_headers(tower_http::cors::Any)
+        );
 
     // Run the server
+    let app = app.fallback_service(
+        tower_http::services::ServeDir::new("frontend/dist")
+            .append_index_html_on_directories(true)
+    );
+
     axum::serve(listener, app).await?;
 
     Ok(())
@@ -432,6 +455,7 @@ async fn handle_health(State(state): State<AppState>) -> impl IntoResponse {
     let body = serde_json::json!({
         "status": "ok",
         "paired": state.pairing.is_paired(),
+        "pairing_enabled": state.pairing.require_pairing(),
         "runtime": crate::health::snapshot_json(),
     });
     Json(body)

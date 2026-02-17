@@ -1,0 +1,16 @@
+[Unit]
+Description=MyMolt Core (ZeroClaw)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/mymolt
+ExecStart=/opt/mymolt/zeroclaw start
+Restart=always
+RestartSec=5
+Environment=RUST_LOG=info
+# Environment=ZEROCLAW_CONFIG=/opt/mymolt/config.toml
+
+[Install]
+WantedBy=multi-user.target

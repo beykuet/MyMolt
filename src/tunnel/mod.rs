@@ -3,6 +3,7 @@ mod custom;
 mod ngrok;
 mod none;
 mod tailscale;
+mod wireguard;
 
 pub use cloudflare::CloudflareTunnel;
 pub use custom::CustomTunnel;
@@ -10,6 +11,7 @@ pub use ngrok::NgrokTunnel;
 #[allow(unused_imports)]
 pub use none::NoneTunnel;
 pub use tailscale::TailscaleTunnel;
+pub use wireguard::WireGuardTunnel;
 
 use crate::config::schema::{TailscaleTunnelConfig, TunnelConfig};
 use anyhow::{bail, Result};
@@ -113,6 +115,17 @@ pub fn create_tunnel(config: &TunnelConfig) -> Result<Option<Box<dyn Tunnel>>> {
                 cu.start_command.clone(),
                 cu.health_url.clone(),
                 cu.url_pattern.clone(),
+            ))))
+        }
+
+        "wireguard" => {
+            let wg = config
+                .wireguard
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("tunnel.provider = \"wireguard\" but [tunnel.wireguard] section is missing"))?;
+            Ok(Some(Box::new(WireGuardTunnel::new(
+                wg.config_path.clone(),
+                wg.interface.clone(),
             ))))
         }
 

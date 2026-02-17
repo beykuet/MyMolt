@@ -1,0 +1,8 @@
+/target/
+/node_install/
+/node_install_new/
+/frontend/dist/
+/frontend/node_modules/
+.DS_Store
+config.toml
+*.log

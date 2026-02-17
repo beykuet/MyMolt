@@ -762,6 +762,9 @@ pub struct TunnelConfig {
 
     #[serde(default)]
     pub custom: Option<CustomTunnelConfig>,
+
+    #[serde(default)]
+    pub wireguard: Option<WireGuardTunnelConfig>,
 }
 
 impl Default for TunnelConfig {
@@ -772,8 +775,17 @@ impl Default for TunnelConfig {
             tailscale: None,
             ngrok: None,
             custom: None,
+            wireguard: None,
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WireGuardTunnelConfig {
+    /// Path to config file (e.g. /etc/wireguard/wg0.conf)
+    pub config_path: String,
+    /// Interface name (e.g. wg0) - defaults to filename stem
+    pub interface: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -900,7 +912,7 @@ pub struct WhatsAppConfig {
     /// Webhook verify token (you define this, Meta sends it back for verification)
     pub verify_token: String,
     /// App secret from Meta Business Suite (for webhook signature verification)
-    /// Can also be set via `ZEROCLAW_WHATSAPP_APP_SECRET` environment variable
+    /// Can also be set via `MYMOLT_WHATSAPP_APP_SECRET` environment variable
     #[serde(default)]
     pub app_secret: Option<String>,
     /// Allowed phone numbers (E.164 format: +1234567890) or "*" for all
@@ -1213,60 +1225,60 @@ impl Config {
 
     /// Apply environment variable overrides to config
     pub fn apply_env_overrides(&mut self) {
-        // API Key: ZEROCLAW_API_KEY or API_KEY
-        if let Ok(key) = std::env::var("ZEROCLAW_API_KEY").or_else(|_| std::env::var("API_KEY")) {
+        // API Key: MYMOLT_API_KEY or API_KEY
+        if let Ok(key) = std::env::var("MYMOLT_API_KEY").or_else(|_| std::env::var("API_KEY")) {
             if !key.is_empty() {
                 self.api_key = Some(key);
             }
         }
 
-        // Provider: ZEROCLAW_PROVIDER or PROVIDER
+        // Provider: MYMOLT_PROVIDER or PROVIDER
         if let Ok(provider) =
-            std::env::var("ZEROCLAW_PROVIDER").or_else(|_| std::env::var("PROVIDER"))
+            std::env::var("MYMOLT_PROVIDER").or_else(|_| std::env::var("PROVIDER"))
         {
             if !provider.is_empty() {
                 self.default_provider = Some(provider);
             }
         }
 
-        // Model: ZEROCLAW_MODEL
-        if let Ok(model) = std::env::var("ZEROCLAW_MODEL") {
+        // Model: MYMOLT_MODEL
+        if let Ok(model) = std::env::var("MYMOLT_MODEL") {
             if !model.is_empty() {
                 self.default_model = Some(model);
             }
         }
 
-        // Workspace directory: ZEROCLAW_WORKSPACE
-        if let Ok(workspace) = std::env::var("ZEROCLAW_WORKSPACE") {
+        // Workspace directory: MYMOLT_WORKSPACE
+        if let Ok(workspace) = std::env::var("MYMOLT_WORKSPACE") {
             if !workspace.is_empty() {
                 self.workspace_dir = PathBuf::from(workspace);
             }
         }
 
-        // Gateway port: ZEROCLAW_GATEWAY_PORT or PORT
+        // Gateway port: MYMOLT_GATEWAY_PORT or PORT
         if let Ok(port_str) =
-            std::env::var("ZEROCLAW_GATEWAY_PORT").or_else(|_| std::env::var("PORT"))
+            std::env::var("MYMOLT_GATEWAY_PORT").or_else(|_| std::env::var("PORT"))
         {
             if let Ok(port) = port_str.parse::<u16>() {
                 self.gateway.port = port;
             }
         }
 
-        // Gateway host: ZEROCLAW_GATEWAY_HOST or HOST
-        if let Ok(host) = std::env::var("ZEROCLAW_GATEWAY_HOST").or_else(|_| std::env::var("HOST"))
+        // Gateway host: MYMOLT_GATEWAY_HOST or HOST
+        if let Ok(host) = std::env::var("MYMOLT_GATEWAY_HOST").or_else(|_| std::env::var("HOST"))
         {
             if !host.is_empty() {
                 self.gateway.host = host;
             }
         }
 
-        // Allow public bind: ZEROCLAW_ALLOW_PUBLIC_BIND
-        if let Ok(val) = std::env::var("ZEROCLAW_ALLOW_PUBLIC_BIND") {
+        // Allow public bind: MYMOLT_ALLOW_PUBLIC_BIND
+        if let Ok(val) = std::env::var("MYMOLT_ALLOW_PUBLIC_BIND") {
             self.gateway.allow_public_bind = val == "1" || val.eq_ignore_ascii_case("true");
         }
 
-        // Temperature: ZEROCLAW_TEMPERATURE
-        if let Ok(temp_str) = std::env::var("ZEROCLAW_TEMPERATURE") {
+        // Temperature: MYMOLT_TEMPERATURE
+        if let Ok(temp_str) = std::env::var("MYMOLT_TEMPERATURE") {
             if let Ok(temp) = temp_str.parse::<f64>() {
                 if (0.0..=2.0).contains(&temp) {
                     self.default_temperature = temp;
@@ -2199,11 +2211,11 @@ default_temperature = 0.7
         let mut config = Config::default();
         assert!(config.api_key.is_none());
 
-        std::env::set_var("ZEROCLAW_API_KEY", "sk-test-env-key");
+        std::env::set_var("MYMOLT_API_KEY", "sk-test-env-key");
         config.apply_env_overrides();
         assert_eq!(config.api_key.as_deref(), Some("sk-test-env-key"));
 
-        std::env::remove_var("ZEROCLAW_API_KEY");
+        std::env::remove_var("MYMOLT_API_KEY");
     }
 
     #[test]
@@ -2211,7 +2223,7 @@ default_temperature = 0.7
         let _guard = env_override_lock();
         let mut config = Config::default();
 
-        std::env::remove_var("ZEROCLAW_API_KEY");
+        std::env::remove_var("MYMOLT_API_KEY");
         std::env::set_var("API_KEY", "sk-fallback-key");
         config.apply_env_overrides();
         assert_eq!(config.api_key.as_deref(), Some("sk-fallback-key"));
@@ -2224,11 +2236,11 @@ default_temperature = 0.7
         let _guard = env_override_lock();
         let mut config = Config::default();
 
-        std::env::set_var("ZEROCLAW_PROVIDER", "anthropic");
+        std::env::set_var("MYMOLT_PROVIDER", "anthropic");
         config.apply_env_overrides();
         assert_eq!(config.default_provider.as_deref(), Some("anthropic"));
 
-        std::env::remove_var("ZEROCLAW_PROVIDER");
+        std::env::remove_var("MYMOLT_PROVIDER");
     }
 
     #[test]
@@ -2236,7 +2248,7 @@ default_temperature = 0.7
         let _guard = env_override_lock();
         let mut config = Config::default();
 
-        std::env::remove_var("ZEROCLAW_PROVIDER");
+        std::env::remove_var("MYMOLT_PROVIDER");
         std::env::set_var("PROVIDER", "openai");
         config.apply_env_overrides();
         assert_eq!(config.default_provider.as_deref(), Some("openai"));
@@ -2249,11 +2261,11 @@ default_temperature = 0.7
         let _guard = env_override_lock();
         let mut config = Config::default();
 
-        std::env::set_var("ZEROCLAW_MODEL", "gpt-4o");
+        std::env::set_var("MYMOLT_MODEL", "gpt-4o");
         config.apply_env_overrides();
         assert_eq!(config.default_model.as_deref(), Some("gpt-4o"));
 
-        std::env::remove_var("ZEROCLAW_MODEL");
+        std::env::remove_var("MYMOLT_MODEL");
     }
 
     #[test]
@@ -2261,11 +2273,11 @@ default_temperature = 0.7
         let _guard = env_override_lock();
         let mut config = Config::default();
 
-        std::env::set_var("ZEROCLAW_WORKSPACE", "/custom/workspace");
+        std::env::set_var("MYMOLT_WORKSPACE", "/custom/workspace");
         config.apply_env_overrides();
         assert_eq!(config.workspace_dir, PathBuf::from("/custom/workspace"));
 
-        std::env::remove_var("ZEROCLAW_WORKSPACE");
+        std::env::remove_var("MYMOLT_WORKSPACE");
     }
 
     #[test]
@@ -2274,11 +2286,11 @@ default_temperature = 0.7
         let mut config = Config::default();
         let original_provider = config.default_provider.clone();
 
-        std::env::set_var("ZEROCLAW_PROVIDER", "");
+        std::env::set_var("MYMOLT_PROVIDER", "");
         config.apply_env_overrides();
         assert_eq!(config.default_provider, original_provider);
 
-        std::env::remove_var("ZEROCLAW_PROVIDER");
+        std::env::remove_var("MYMOLT_PROVIDER");
     }
 
     #[test]
@@ -2287,11 +2299,11 @@ default_temperature = 0.7
         let mut config = Config::default();
         assert_eq!(config.gateway.port, 3000);
 
-        std::env::set_var("ZEROCLAW_GATEWAY_PORT", "8080");
+        std::env::set_var("MYMOLT_GATEWAY_PORT", "8080");
         config.apply_env_overrides();
         assert_eq!(config.gateway.port, 8080);
 
-        std::env::remove_var("ZEROCLAW_GATEWAY_PORT");
+        std::env::remove_var("MYMOLT_GATEWAY_PORT");
     }
 
     #[test]
@@ -2299,7 +2311,7 @@ default_temperature = 0.7
         let _guard = env_override_lock();
         let mut config = Config::default();
 
-        std::env::remove_var("ZEROCLAW_GATEWAY_PORT");
+        std::env::remove_var("MYMOLT_GATEWAY_PORT");
         std::env::set_var("PORT", "9000");
         config.apply_env_overrides();
         assert_eq!(config.gateway.port, 9000);
@@ -2313,11 +2325,11 @@ default_temperature = 0.7
         let mut config = Config::default();
         assert_eq!(config.gateway.host, "127.0.0.1");
 
-        std::env::set_var("ZEROCLAW_GATEWAY_HOST", "0.0.0.0");
+        std::env::set_var("MYMOLT_GATEWAY_HOST", "0.0.0.0");
         config.apply_env_overrides();
         assert_eq!(config.gateway.host, "0.0.0.0");
 
-        std::env::remove_var("ZEROCLAW_GATEWAY_HOST");
+        std::env::remove_var("MYMOLT_GATEWAY_HOST");
     }
 
     #[test]
@@ -2325,7 +2337,7 @@ default_temperature = 0.7
         let _guard = env_override_lock();
         let mut config = Config::default();
 
-        std::env::remove_var("ZEROCLAW_GATEWAY_HOST");
+        std::env::remove_var("MYMOLT_GATEWAY_HOST");
         std::env::set_var("HOST", "0.0.0.0");
         config.apply_env_overrides();
         assert_eq!(config.gateway.host, "0.0.0.0");
@@ -2338,31 +2350,31 @@ default_temperature = 0.7
         let _guard = env_override_lock();
         let mut config = Config::default();
 
-        std::env::set_var("ZEROCLAW_TEMPERATURE", "0.5");
+        std::env::set_var("MYMOLT_TEMPERATURE", "0.5");
         config.apply_env_overrides();
         assert!((config.default_temperature - 0.5).abs() < f64::EPSILON);
 
-        std::env::remove_var("ZEROCLAW_TEMPERATURE");
+        std::env::remove_var("MYMOLT_TEMPERATURE");
     }
 
     #[test]
     fn env_override_temperature_out_of_range_ignored() {
         let _guard = env_override_lock();
         // Clean up any leftover env vars from other tests
-        std::env::remove_var("ZEROCLAW_TEMPERATURE");
+        std::env::remove_var("MYMOLT_TEMPERATURE");
 
         let mut config = Config::default();
         let original_temp = config.default_temperature;
 
         // Temperature > 2.0 should be ignored
-        std::env::set_var("ZEROCLAW_TEMPERATURE", "3.0");
+        std::env::set_var("MYMOLT_TEMPERATURE", "3.0");
         config.apply_env_overrides();
         assert!(
             (config.default_temperature - original_temp).abs() < f64::EPSILON,
             "Temperature 3.0 should be ignored (out of range)"
         );
 
-        std::env::remove_var("ZEROCLAW_TEMPERATURE");
+        std::env::remove_var("MYMOLT_TEMPERATURE");
     }
 
     #[test]
