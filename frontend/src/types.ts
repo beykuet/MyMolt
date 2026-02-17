@@ -6,6 +6,7 @@ export interface SystemStatus {
     active_agents: number;
     voice_mode_active: boolean;
     pairing_enabled: boolean;
+    voice_echo_enabled: boolean;
 }
 
 export interface IdentityStatus {
@@ -15,6 +16,12 @@ export interface IdentityStatus {
     linked_at: string;
 }
 
+export interface IdentityProvider {
+    id: string;
+    name: string;
+    icon_url?: string;
+}
+
 export interface WidgetConfig {
     id: string;
     type_: string;
@@ -22,3 +29,9 @@ export interface WidgetConfig {
     icon?: string;
     action_url?: string;
 }
+
+export type WsMessage =
+    | { type: 'text'; payload: { content: string; sender: string; is_final: boolean } }
+    | { type: 'audio'; payload: { data: string; format: string } }
+    | { type: 'control'; payload: { event: string } }
+    | { type: 'error'; payload: { code: string; message: string } };

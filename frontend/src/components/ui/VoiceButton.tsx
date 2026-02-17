@@ -3,10 +3,11 @@ import { Mic } from 'lucide-react';
 
 interface VoiceButtonProps {
     isListening: boolean;
+    volume?: number;
     onClick: () => void;
 }
 
-export function VoiceButton({ isListening, onClick }: VoiceButtonProps) {
+export function VoiceButton({ isListening, volume = 0, onClick }: VoiceButtonProps) {
     return (
         <button onClick={onClick} className="relative group focus:outline-none">
             {/* Pulse Effect */}
@@ -14,13 +15,21 @@ export function VoiceButton({ isListening, onClick }: VoiceButtonProps) {
                 <span className="absolute inset-0 rounded-full bg-blue-400 opacity-75 animate-ping z-0"></span>
             )}
 
+            {/* Volume feedback ring */}
+            {isListening && (
+                <motion.div
+                    animate={{ scale: 1 + volume * 1.5, opacity: 0.2 + volume }}
+                    className="absolute inset-x-0 inset-y-0 rounded-full bg-blue-500 z-0"
+                />
+            )}
+
             {/* Main Button */}
             <motion.div
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
                 className={`relative z-10 w-20 h-20 rounded-full flex items-center justify-center shadow-lg transition-all duration-300 ${isListening
-                        ? 'bg-red-500 hover:bg-red-600 text-white'
-                        : 'bg-gradient-to-tr from-blue-500 to-purple-600 text-white group-hover:shadow-blue-500/50'
+                    ? 'bg-red-500 hover:bg-red-600 text-white'
+                    : 'bg-gradient-to-tr from-blue-500 to-purple-600 text-white group-hover:shadow-blue-500/50'
                     }`}
             >
                 <Mic size={32} className={isListening ? 'animate-pulse' : ''} />

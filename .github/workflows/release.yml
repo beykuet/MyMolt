@@ -36,10 +36,9 @@ jobs:
         run: |
           cd target/${{ matrix.target }}/release
           tar czf zeroclaw-${{ matrix.target }}.tar.gz zeroclaw
-          echo "ASSET_PATH=target/${{ matrix.target }}/release/zeroclaw-${{ matrix.target }}.tar.gz" >> $GITHUB_ENV
 
       - name: Upload Release Asset
         uses: softprops/action-gh-release@v1
         if: startsWith(github.ref, 'refs/tags/')
         with:
-          files: ${{ env.ASSET_PATH }}
+          files: target/${{ matrix.target }}/release/zeroclaw-${{ matrix.target }}.tar.gz

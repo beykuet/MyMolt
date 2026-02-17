@@ -69,7 +69,7 @@ pub struct Config {
     pub identity: IdentityConfig,
 
     /// Hardware Abstraction Layer (HAL) configuration.
-    /// Controls how ZeroClaw interfaces with physical hardware
+    /// Controls how MyMolt interfaces with physical hardware
     /// (GPIO, serial, debug probes).
     #[serde(default)]
     pub hardware: crate::hardware::HardwareConfig,
@@ -108,6 +108,30 @@ pub struct IdentityConfig {
     /// Inline AIEOS JSON (alternative to file path)
     #[serde(default)]
     pub aieos_inline: Option<String>,
+    
+    /// List of configured OIDC providers (e.g. ID Austria, SPID)
+    #[serde(default)]
+    pub providers: Vec<OIDCProviderConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OIDCProviderConfig {
+    /// Display name (e.g. "ID Austria")
+    pub name: String,
+    /// Unique identifier for this provider (e.g. "id-austria")
+    pub id: String,
+    /// OIDC Issuer URL (e.g. "https://eid.example.com")
+    pub issuer_url: String,
+    /// OAuth2 Client ID
+    pub client_id: String,
+    /// OAuth2 Client Secret (optional for public clients)
+    pub client_secret: Option<String>,
+    /// Icon URL for the frontend button
+    pub icon_url: Option<String>,
+    /// Optional mapping of claims to MyMolt identity fields
+    /// e.g. "sub" -> "id", "email" -> "email"
+    #[serde(default)]
+    pub mapping: HashMap<String, String>,
 }
 
 fn default_identity_format() -> String {
@@ -120,6 +144,7 @@ impl Default for IdentityConfig {
             format: default_identity_format(),
             aieos_path: None,
             aieos_inline: None,
+            providers: Vec::new(),
         }
     }
 }
@@ -453,7 +478,7 @@ pub struct ObservabilityConfig {
     #[serde(default)]
     pub otel_endpoint: Option<String>,
 
-    /// Service name reported to the OTel collector. Defaults to "zeroclaw".
+    /// Service name reported to the OTel collector. Defaults to "mymolt".
     #[serde(default)]
     pub otel_service_name: Option<String>,
 }
@@ -1105,7 +1130,7 @@ pub struct AuditConfig {
     #[serde(default = "default_audit_enabled")]
     pub enabled: bool,
 
-    /// Path to audit log file (relative to zeroclaw dir)
+    /// Path to audit log file (relative to mymolt dir)
     #[serde(default = "default_audit_log_path")]
     pub log_path: String,
 
@@ -1147,11 +1172,11 @@ impl Default for Config {
     fn default() -> Self {
         let home =
             UserDirs::new().map_or_else(|| PathBuf::from("."), |u| u.home_dir().to_path_buf());
-        let zeroclaw_dir = home.join(".zeroclaw");
+        let mymolt_dir = home.join(".mymolt");
 
         Self {
-            workspace_dir: zeroclaw_dir.join("workspace"),
-            config_path: zeroclaw_dir.join("config.toml"),
+            workspace_dir: mymolt_dir.join("workspace"),
+            config_path: mymolt_dir.join("config.toml"),
             api_key: None,
             default_provider: Some("openrouter".to_string()),
             default_model: Some("anthropic/claude-sonnet-4".to_string()),
@@ -1183,12 +1208,12 @@ impl Config {
         let home = UserDirs::new()
             .map(|u| u.home_dir().to_path_buf())
             .context("Could not find home directory")?;
-        let zeroclaw_dir = home.join(".zeroclaw");
-        let config_path = zeroclaw_dir.join("config.toml");
+        let mymolt_dir = home.join(".mymolt");
+        let config_path = mymolt_dir.join("config.toml");
 
-        if !zeroclaw_dir.exists() {
-            fs::create_dir_all(&zeroclaw_dir).context("Failed to create .zeroclaw directory")?;
-            fs::create_dir_all(zeroclaw_dir.join("workspace"))
+        if !mymolt_dir.exists() {
+            fs::create_dir_all(&mymolt_dir).context("Failed to create .mymolt directory")?;
+            fs::create_dir_all(mymolt_dir.join("workspace"))
                 .context("Failed to create workspace directory")?;
         }
 
@@ -1199,10 +1224,10 @@ impl Config {
                 toml::from_str(&contents).context("Failed to parse config file")?;
             // Set computed paths that are skipped during serialization
             config.config_path = config_path.clone();
-            config.workspace_dir = zeroclaw_dir.join("workspace");
+            config.workspace_dir = mymolt_dir.join("workspace");
 
             // Decrypt agent API keys if encryption is enabled
-            let store = crate::security::SecretStore::new(&zeroclaw_dir, config.secrets.encrypt);
+            let store = crate::security::SecretStore::new(&mymolt_dir, config.secrets.encrypt);
             for agent in config.agents.values_mut() {
                 if let Some(ref encrypted_key) = agent.api_key {
                     agent.api_key = Some(
@@ -1217,7 +1242,7 @@ impl Config {
         } else {
             let mut config = Config::default();
             config.config_path = config_path.clone();
-            config.workspace_dir = zeroclaw_dir.join("workspace");
+            config.workspace_dir = mymolt_dir.join("workspace");
             config.save()?;
             Ok(config)
         }
@@ -1290,11 +1315,11 @@ impl Config {
     pub fn save(&self) -> Result<()> {
         // Encrypt agent API keys before serialization
         let mut config_to_save = self.clone();
-        let zeroclaw_dir = self
+        let mymolt_dir = self
             .config_path
             .parent()
             .context("Config path must have a parent directory")?;
-        let store = crate::security::SecretStore::new(zeroclaw_dir, self.secrets.encrypt);
+        let store = crate::security::SecretStore::new(mymolt_dir, self.secrets.encrypt);
         for agent in config_to_save.agents.values_mut() {
             if let Some(ref plaintext_key) = agent.api_key {
                 if !crate::security::SecretStore::is_encrypted(plaintext_key) {
@@ -1574,7 +1599,7 @@ default_temperature = 0.7
 
     #[test]
     fn config_save_and_load_tmpdir() {
-        let dir = std::env::temp_dir().join("zeroclaw_test_config");
+        let dir = std::env::temp_dir().join("mymolt_test_config");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
 
@@ -1621,7 +1646,7 @@ default_temperature = 0.7
     #[test]
     fn config_save_atomic_cleanup() {
         let dir =
-            std::env::temp_dir().join(format!("zeroclaw_test_config_{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("mymolt_test_config_{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&dir).unwrap();
 
         let config_path = dir.join("config.toml");
@@ -2545,8 +2570,8 @@ temperature = 0.3
     #[test]
     fn agent_api_key_encrypted_on_save_and_decrypted_on_load() {
         let tmp = TempDir::new().unwrap();
-        let zeroclaw_dir = tmp.path();
-        let config_path = zeroclaw_dir.join("config.toml");
+        let mymolt_dir = tmp.path();
+        let config_path = mymolt_dir.join("config.toml");
 
         // Create a config with a plaintext agent API key
         let mut agents = HashMap::new();
@@ -2563,7 +2588,7 @@ temperature = 0.3
         );
         let config = Config {
             config_path: config_path.clone(),
-            workspace_dir: zeroclaw_dir.join("workspace"),
+            workspace_dir: mymolt_dir.join("workspace"),
             secrets: SecretsConfig { encrypt: true },
             agents,
             ..Config::default()
@@ -2583,7 +2608,7 @@ temperature = 0.3
         );
 
         // Parse and decrypt — simulate load_or_init by reading + decrypting
-        let store = crate::security::SecretStore::new(zeroclaw_dir, true);
+        let store = crate::security::SecretStore::new(mymolt_dir, true);
         let mut loaded: Config = toml::from_str(&raw).unwrap();
         for agent in loaded.agents.values_mut() {
             if let Some(ref encrypted_key) = agent.api_key {
@@ -2600,8 +2625,8 @@ temperature = 0.3
     #[test]
     fn agent_api_key_not_encrypted_when_disabled() {
         let tmp = TempDir::new().unwrap();
-        let zeroclaw_dir = tmp.path();
-        let config_path = zeroclaw_dir.join("config.toml");
+        let mymolt_dir = tmp.path();
+        let config_path = mymolt_dir.join("config.toml");
 
         let mut agents = HashMap::new();
         agents.insert(
@@ -2617,7 +2642,7 @@ temperature = 0.3
         );
         let config = Config {
             config_path: config_path.clone(),
-            workspace_dir: zeroclaw_dir.join("workspace"),
+            workspace_dir: mymolt_dir.join("workspace"),
             secrets: SecretsConfig { encrypt: false },
             agents,
             ..Config::default()

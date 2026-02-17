@@ -7,6 +7,7 @@ pub mod openrouter;
 pub mod reliable;
 pub mod router;
 pub mod traits;
+pub mod mock_voice;
 
 #[allow(unused_imports)]
 pub use traits::{ChatMessage, ChatResponse, Provider, ToolCall};
@@ -293,7 +294,7 @@ pub fn create_provider(name: &str, api_key: Option<&str>) -> anyhow::Result<Box<
         }
 
         _ => anyhow::bail!(
-            "Unknown provider: {name}. Check README for supported providers or run `zeroclaw onboard --interactive` to reconfigure.\n\
+            "Unknown provider: {name}. Check README for supported providers or run `mymolt onboard --interactive` to reconfigure.\n\
              Tip: Use \"custom:https://your-api.com\" for OpenAI-compatible endpoints.\n\
              Tip: Use \"anthropic-custom:https://your-api.com\" for Anthropic-compatible endpoints."
         ),

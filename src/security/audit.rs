@@ -152,8 +152,8 @@ pub struct AuditLogger {
 
 impl AuditLogger {
     /// Create a new audit logger
-    pub fn new(config: AuditConfig, zeroclaw_dir: PathBuf) -> Result<Self> {
-        let log_path = zeroclaw_dir.join(&config.log_path);
+    pub fn new(config: AuditConfig, mymolt_dir: PathBuf) -> Result<Self> {
+        let log_path = mymolt_dir.join(&config.log_path);
         Ok(Self {
             log_path,
             config,

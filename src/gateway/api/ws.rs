@@ -113,25 +113,43 @@ async fn process_message(msg: WsMessage, socket: &mut WebSocket, state: &AppStat
             }
         }
         WsMessage::Audio { data, format } => {
-            // TODO: Implement STT here
-            // 1. Decode base64 `data`
-            // 2. Feed to STT engine (e.g. Whisper)
-            // 3. Get text
-            // 4. Feed text to Agent (recurse or call process_text logic)
-            // 5. Get Agent text response
-            // 6. Feed text to TTS
-            // 7. Send audio back
-            
             tracing::info!("Received audio chunk: {} bytes, format: {}", data.len(), format);
             
-            // Ack
-            let ack = WsMessage::Control { event: "audio_received".into() };
-             if let Ok(json) = serde_json::to_string(&ack) {
-                let _ = socket.send(Message::Text(json.into())).await;
+            // WebSocket Echo (Loopback) Mode
+            if state.voice_echo_enabled.load(std::sync::atomic::Ordering::Relaxed) {
+                let echo_msg = WsMessage::Audio {
+                    data: data.clone(),
+                    format: format.clone(),
+                };
+                if let Ok(json) = serde_json::to_string(&echo_msg) {
+                    let _ = socket.send(Message::Text(json.into())).await;
+                }
+            } else {
+                // TODO: Implement STT here
+                // 1. Decode base64 `data`
+                // 2. Feed to STT engine (e.g. Whisper)
+                
+                // Ack
+                let ack = WsMessage::Control { event: "audio_received".into() };
+                 if let Ok(json) = serde_json::to_string(&ack) {
+                    let _ = socket.send(Message::Text(json.into())).await;
+                }
             }
         }
         WsMessage::Control { event } => {
             tracing::info!("Received control event: {}", event);
+            
+            if event == "voice_test" {
+                // Send mock bot response
+                let mock_audio = crate::providers::mock_voice::MockVoiceProvider::get_response_audio();
+                let resp = WsMessage::Audio {
+                    data: mock_audio,
+                    format: "wav".into(),
+                };
+                if let Ok(json) = serde_json::to_string(&resp) {
+                    let _ = socket.send(Message::Text(json.into())).await;
+                }
+            }
         }
         _ => {}
     }

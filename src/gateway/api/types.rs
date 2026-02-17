@@ -11,6 +11,7 @@ pub struct SystemStatus {
     pub active_agents: usize,
     pub voice_mode_active: bool,
     pub pairing_enabled: bool,
+    pub voice_echo_enabled: bool,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -36,6 +37,13 @@ pub struct IdentityStatus {
 pub struct LinkIdentityRequest {
     pub provider: String,
     pub token: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct IdentityProvider {
+    pub id: String,
+    pub name: String,
+    pub icon_url: Option<String>,
 }
 
 // ── Config ───────────────────────────────────────────────────────

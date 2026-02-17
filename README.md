@@ -1,7 +1,7 @@
 # MyMolt Core 🇪🇺 🌍
 
 [![License: EUPL v1.2](https://img.shields.io/badge/license-EUPL%20v1.2-blue.svg)](https://joinup.ec.europa.eu/collection/eupl/eupl-text-eupl-12)
-[![Based on ZeroClaw](https://img.shields.io/badge/Based%20on-ZeroClaw-orange)](https://github.com/openagen/zeroclaw)
+[![Based on ZeroClaw](https://img.shields.io/badge/Based%20on-MyMolt-orange)](https://github.com/openagen/mymolt)
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen)]()
 [![Identity](https://img.shields.io/badge/Identity-eIDAS%20%2B%20OIDC-blueviolet)]()
 
@@ -16,7 +16,7 @@
 
 MyMolt is more than just software; it is a digital public utility. In an era where personal data is often exploited, MyMolt returns control to the individual.
 
-Built on the ultra-efficient **ZeroClaw Framework (Rust)**, MyMolt enables every citizen to run their own sovereign AI agent. Our system runs on minimal hardware (starting at <€1 VPS or Raspberry Pi), ensuring that privacy and high-tech assistance are accessible to all parts of society, not just the wealthy.
+Built on the ultra-efficient **MyMolt Framework (Rust)**, MyMolt enables every citizen to run their own sovereign AI agent. Our system runs on minimal hardware (starting at <€1 VPS or Raspberry Pi), ensuring that privacy and high-tech assistance are accessible to all parts of society, not just the wealthy.
 
 ### Core Philosophy
 *   **Digital Sovereignty:** Your data, your agent, your rules.
@@ -28,7 +28,7 @@ Built on the ultra-efficient **ZeroClaw Framework (Rust)**, MyMolt enables every
 ## 🚀 Key Features
 
 ### 1. High-Performance Core (Rust)
-MyMolt Core utilizes the ZeroClaw architecture to deliver maximum efficiency, making digital independence affordable for everyone.
+MyMolt Core utilizes the MyMolt architecture to deliver maximum efficiency, making digital independence affordable for everyone.
 *   **<5 MB RAM** idle usage.
 *   **<10ms** startup time.
 *   Runs on **€1 VPS** instances, legacy laptops, or Single Board Computers (Olimex, Raspberry Pi).
@@ -76,12 +76,12 @@ To link your agent to your real-world identity:
 ```
 --------------------------------------------------------------------------------
 🏗 Architecture
-MyMolt extends the ZeroClaw design with layers focused on compliance, identity, and social safety:
+MyMolt extends the MyMolt design with layers focused on compliance, identity, and social safety:
 Layer
 Technology
 Description
 Core
-Rust / ZeroClaw
+Rust / MyMolt
 The runtime environment. Efficient, secure, sandboxed.
 Identity
 OIDC / eIDAS
@@ -111,6 +111,6 @@ Please note our Code of Conduct and Security Policy.
 ⚖️ License
 This project is licensed under the European Union Public Licence (EUPL v. 1.2).
 This license was chosen to ensure MyMolt remains a free tool for society. It is compatible with the GPL but legally valid in all EU languages and specifically designed for the public sector.
-Note: The core framework is based on ZeroClaw (MIT License); all MyMolt-specific extensions (Identity, Governance, Mesh Logic) are subject to the EUPL.
+Note: The core framework is based on MyMolt (MIT License); all MyMolt-specific extensions (Identity, Governance, Mesh Logic) are subject to the EUPL.
 
 --------------------------------------------------------------------------------

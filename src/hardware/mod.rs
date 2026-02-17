@@ -1,4 +1,4 @@
-//! Hardware Abstraction Layer (HAL) for ZeroClaw.
+//! Hardware Abstraction Layer (HAL) for MyMolt.
 //!
 //! Provides auto-discovery of connected hardware, transport abstraction,
 //! and a unified interface so the LLM agent can control physical devices
@@ -155,7 +155,7 @@ impl HardwareConfig {
 
         // Serial requires a port
         if mode == HardwareTransport::Serial && self.serial_port.is_none() {
-            bail!("Hardware transport is 'serial' but no serial_port is configured. Run `zeroclaw onboard --interactive` or set hardware.serial_port in config.toml.");
+            bail!("Hardware transport is 'serial' but no serial_port is configured. Run `mymolt onboard --interactive` or set hardware.serial_port in config.toml.");
         }
 
         // Probe requires a target chip
@@ -381,7 +381,7 @@ pub struct NoopHal;
 
 impl HardwareHal for NoopHal {
     fn gpio_read(&self, pin: u8) -> Result<bool> {
-        bail!("Hardware not enabled. Cannot read GPIO pin {pin}. Enable hardware in config.toml or run `zeroclaw onboard --interactive`.");
+        bail!("Hardware not enabled. Cannot read GPIO pin {pin}. Enable hardware in config.toml or run `mymolt onboard --interactive`.");
     }
 
     fn gpio_write(&self, pin: u8, value: bool) -> Result<()> {

@@ -112,7 +112,7 @@ sandbox-bubblewrap = []         # User namespaces (Linux/macOS)
 security-full = ["sandbox-landlock"]
 
 [[bin]]
-name = "zeroclaw"
+name = "mymolt"
 path = "src/main.rs"
 
 [profile.release]

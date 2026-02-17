@@ -210,6 +210,9 @@ pub struct AppState {
     /// `WhatsApp` app secret for webhook signature verification (`X-Hub-Signature-256`)
     pub whatsapp_app_secret: Option<Arc<str>>,
     pub soul: Arc<Mutex<crate::identity::Soul>>,
+    pub voice_echo_enabled: Arc<std::sync::atomic::AtomicBool>,
+    pub identity_config: Arc<crate::config::IdentityConfig>,
+    pub public_url: String,
 }
 
 /// Run the HTTP gateway using axum with proper HTTP/1.1 compliance.
@@ -358,7 +361,7 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         }
     }
 
-    println!("🦀 ZeroClaw Gateway listening on http://{display_addr}");
+    println!("🦎 MyMolt Gateway listening on http://{display_addr}");
     if let Some(ref url) = tunnel_url {
         println!("  🌐 Public URL: {url}");
     }
@@ -411,6 +414,10 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
             }
             s
         })),
+        voice_echo_enabled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        identity_config: Arc::new(config.identity),
+        // Use tunnel URL if available, otherwise host:port
+        public_url: tunnel_url.unwrap_or_else(|| format!("http://{display_addr}")),
     };
 
 
