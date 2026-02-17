@@ -1,5 +1,5 @@
-use anyhow::Result;
-use base64::{engine::general_purpose, Engine as _};
+// use anyhow::Result;
+use base64;
 
 /// A mock TTS provider that returns a hardcoded "Hello" audio sample.
 /// In a real app, this would call une ElevenLabs, OpenAI TTS, etc.

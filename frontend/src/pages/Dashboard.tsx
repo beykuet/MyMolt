@@ -3,6 +3,8 @@ import { Header } from '../components/layout/Header';
 import { StatusCard } from '../components/ui/StatusCard';
 import { VoiceButton } from '../components/ui/VoiceButton';
 import { Mascot } from '../components/ui/Mascot';
+import { WalletConnect } from '../components/WalletConnect';
+import { VPNManager } from '../components/VPNManager';
 import { Activity, Shield, Cpu, Lock, Plus } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import type { IdentityStatus, SystemStatus, IdentityProvider } from '../types';
@@ -289,6 +291,16 @@ export function Dashboard({ onLogout }: DashboardProps) {
                             ))}
                         </div>
                     </StatusCard>
+
+                    {/* SSI Wallet Connect Card - Show if no SSI-Wallet linked */}
+                    {!identities.some(i => i.provider === 'SSI-Wallet') && (
+                        <WalletConnect onConnected={fetchIdentities} />
+                    )}
+
+                    {/* VPN Manager */}
+                    <div className="col-span-1 md:col-span-2 lg:col-span-2">
+                        <VPNManager />
+                    </div>
                 </div>
 
                 {/* Voice Interaction Area */}

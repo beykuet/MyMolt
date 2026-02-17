@@ -62,6 +62,7 @@ mod skills;
 mod tools;
 mod tunnel;
 mod util;
+mod network;
 
 use config::Config;
 

@@ -99,6 +99,10 @@ rand = "0.8"
 futures = "0.3.32"
 serde_urlencoded = "0.7.1"
 async-trait = "0.1.89"
+didkit = "0.6.0"
+ssi = "0.15.0"
+x25519-dalek = { version = "2.0.0", features = ["serde", "static_secrets"] }
+rand_core = { version = "0.6", features = ["std"] }
 
 [features]
 default = []

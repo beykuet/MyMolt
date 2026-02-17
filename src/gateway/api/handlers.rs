@@ -24,9 +24,39 @@ pub fn router() -> Router<AppState> {
         .route("/api/auth/providers", get(get_auth_providers))
         .route("/api/auth/login/{provider_id}", get(handle_oidc_login))
         .route("/api/auth/callback/{provider_id}", get(handle_oidc_callback))
+        // SSI
+        .route("/api/identity/verify-vp", post(verify_vp_endpoint))
 }
 
 // ── Handlers ─────────────────────────────────────────────────────
+
+#[derive(serde::Deserialize)]
+struct VerifyVPRequest {
+    vp: String, // JSON-LD or JWT string
+}
+
+async fn verify_vp_endpoint(
+    _user: AuthenticatedUser,
+    State(state): State<AppState>,
+    Json(payload): Json<VerifyVPRequest>,
+) -> Json<serde_json::Value> {
+    match crate::identity::ssi::SSIGuardian::verify_vp(&payload.vp).await {
+        Ok(result) => {
+            if result.is_valid {
+                // Link the DID to the soul
+                if let Some(holder) = &result.holder_did {
+                    let mut soul = state.soul.lock().unwrap();
+                    // SSI is high trust usually
+                    let _ = soul.add_binding("SSI-Wallet", holder, crate::identity::soul::TrustLevel::High);
+                }
+            }
+            Json(serde_json::json!({ "success": true, "result": result }))
+        }
+        Err(e) => {
+             Json(serde_json::json!({ "success": false, "error": format!("{e}") }))
+        }
+    }
+}
 
 
 async fn get_widgets(_user: AuthenticatedUser, State(_state): State<AppState>) -> Json<Vec<WidgetConfig>> {

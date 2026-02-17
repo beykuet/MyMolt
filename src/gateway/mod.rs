@@ -212,6 +212,7 @@ pub struct AppState {
     pub soul: Arc<Mutex<crate::identity::Soul>>,
     pub voice_echo_enabled: Arc<std::sync::atomic::AtomicBool>,
     pub identity_config: Arc<crate::config::IdentityConfig>,
+    pub vpn_manager: Arc<crate::network::VpnManager>,
     pub public_url: String,
 }
 
@@ -416,6 +417,9 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         })),
         voice_echo_enabled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         identity_config: Arc::new(config.identity),
+        vpn_manager: Arc::new(crate::network::VpnManager::new(
+            format!("{}/network/wg0.conf", config.workspace_dir.display())
+        )),
         // Use tunnel URL if available, otherwise host:port
         public_url: tunnel_url.unwrap_or_else(|| format!("http://{display_addr}")),
     };

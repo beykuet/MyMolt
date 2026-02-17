@@ -1,8 +1,21 @@
-/target/
-/node_install/
-/node_install_new/
-/frontend/dist/
-/frontend/node_modules/
+# Rust
+target/
+**/*.rs.bk
+
+# Node
+node_modules/
+frontend/node_modules/
+frontend/dist/
+
+# System
 .DS_Store
+.env
+.idea/
+.vscode/
+
+# MyMolt Data
+database.db
+wallet.json
+network/
+brain/
 config.toml
-*.log
