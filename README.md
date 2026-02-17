@@ -27,7 +27,7 @@ MyMolt Core has reached a major milestone in providing a truly sovereign and sec
 *   **Voice Interface**:
     *   Real-time voice interaction with the agent directly from the dashboard.
 *   **Dashboard UI**:
-    *   A beautiful, responsive React/Vite dashboard for managing your digital life.
+    *   A (currently not so) beautiful, responsive React/Vite dashboard for managing essential functionalities (chat, vpn, IDs, security etc..).
 
 ---
 
