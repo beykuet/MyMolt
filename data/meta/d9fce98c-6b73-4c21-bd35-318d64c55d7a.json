@@ -1,0 +1,9 @@
+{
+  "id": "d9fce98c-6b73-4c21-bd35-318d64c55d7a",
+  "description": "Vaulted content for openai_key: OpenAI Key",
+  "vault_path": "./data/vault/d9fce98c-6b73-4c21-bd35-318d64c55d7a.age",
+  "created_at": "2026-02-19T00:48:19.828986+00:00",
+  "tags": [
+    "vault"
+  ]
+}
