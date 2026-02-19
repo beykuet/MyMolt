@@ -1,0 +1,9 @@
+{
+  "id": "c6570fb2-780c-4715-8270-a0dfa5bb8d11",
+  "description": "Vaulted content for iban: IBAN",
+  "vault_path": "./data/vault/c6570fb2-780c-4715-8270-a0dfa5bb8d11.age",
+  "created_at": "2026-02-19T00:48:19.929228+00:00",
+  "tags": [
+    "vault"
+  ]
+}
