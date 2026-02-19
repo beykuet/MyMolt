@@ -1,0 +1,9 @@
+{
+  "id": "2c522003-7d9b-4c33-a130-edd2b65eee76",
+  "description": "Vaulted content for iban: IBAN",
+  "vault_path": "./data/vault/2c522003-7d9b-4c33-a130-edd2b65eee76.age",
+  "created_at": "2026-02-19T00:49:42.373560+00:00",
+  "tags": [
+    "vault"
+  ]
+}
