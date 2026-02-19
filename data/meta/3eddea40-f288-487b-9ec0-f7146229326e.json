@@ -1,0 +1,9 @@
+{
+  "id": "3eddea40-f288-487b-9ec0-f7146229326e",
+  "description": "Vaulted content for openai_key: OpenAI Key",
+  "vault_path": "./data/vault/3eddea40-f288-487b-9ec0-f7146229326e.age",
+  "created_at": "2026-02-19T00:48:51.880788+00:00",
+  "tags": [
+    "vault"
+  ]
+}
