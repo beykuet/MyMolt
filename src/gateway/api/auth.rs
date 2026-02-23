@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: EUPL-1.2
+// Copyright (c) 2026 Benjamin Küttner <benjamin.kuettner@icloud.com>
+// Patent Pending — DE Gebrauchsmuster, filed 2026-02-23
+
 use axum::{
     extract::FromRequestParts,
     http::{header, request::Parts, StatusCode},
@@ -5,7 +9,9 @@ use axum::{
 use crate::gateway::AppState;
 use serde::Deserialize;
 
-pub struct AuthenticatedUser;
+pub struct AuthenticatedUser {
+    pub role: crate::identity::UserRole,
+}
 
 #[derive(Debug, Deserialize)]
 pub struct AuthQuery {
@@ -19,37 +25,46 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
+        // Helper to validate token and return role
+        let check_token = |token: &str| -> Option<crate::identity::UserRole> {
+            if state.pairing.is_authenticated(token) {
+                 // For MVP: The main pairing token grants ROOT access.
+                 // Future: Look up token in DB to find specific user/role.
+                 Some(crate::identity::UserRole::Root) 
+            } else if token.is_empty() && state.pairing.is_authenticated("") {
+                 // No-auth mode (development only) -> Root
+                 Some(crate::identity::UserRole::Root)
+            } else {
+                None
+            }
+        };
+
         // 1. Check Authorization header
         if let Some(auth_header) = parts.headers.get(header::AUTHORIZATION) {
             if let Ok(auth_str) = auth_header.to_str() {
                 if auth_str.starts_with("Bearer ") {
                     let token = &auth_str[7..];
-                    if state.pairing.is_authenticated(token) {
-                        return Ok(AuthenticatedUser);
+                    if let Some(role) = check_token(token) {
+                        return Ok(AuthenticatedUser { role });
                     }
                 }
             }
         }
 
-        // 2. Check Query param (for WebSocket or easy CLI testing)
-        // We have to manually parse query string because FromRequestParts doesn't compose easily with Query extractor here without cloning
+        // 2. Check Query param (DEPRECATED for security, but kept for WS compatibility if needed)
         if let Some(query) = parts.uri.query() {
             if let Ok(params) = serde_urlencoded::from_str::<AuthQuery>(query) {
                 if let Some(token) = params.token {
-                    if state.pairing.is_authenticated(&token) {
-                        return Ok(AuthenticatedUser);
+                    if let Some(role) = check_token(&token) {
+                        return Ok(AuthenticatedUser { role });
                     }
                 }
             }
         }
 
-        // If pairing is disabled, we might allow access, but usually we want to enforce it if configured.
-        // The PairingGuard::is_authenticated handles "pairing disabled" logic (returns true).
-        // If we fell through here, it means either no token provided OR token invalid.
-        
-        // Final check for "no auth required" case if guard says so (empty token)
-        if state.pairing.is_authenticated("") {
-             return Ok(AuthenticatedUser);
+        // 3. Check for "no auth required" case (empty strings)
+        if let Some(role) = check_token("") {
+             return Ok(AuthenticatedUser { role });
         }
 
         Err((StatusCode::UNAUTHORIZED, "Unauthorized"))

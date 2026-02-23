@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: EUPL-1.2
+// Copyright (c) 2026 Benjamin Küttner <benjamin.kuettner@icloud.com>
+// Patent Pending — DE Gebrauchsmuster, filed 2026-02-23
+
 //! Audit logging for security events
 
 use crate::config::AuditConfig;
@@ -21,6 +25,8 @@ pub enum AuditEventType {
     AuthFailure,
     PolicyViolation,
     SecurityEvent,
+    SigilInterception,
+    DelegationCrossing,
 }
 
 /// Actor information (who performed the action)
@@ -159,6 +165,10 @@ impl AuditLogger {
             config,
             buffer: Mutex::new(Vec::new()),
         })
+    }
+
+    pub fn log_path(&self) -> &std::path::Path {
+        &self.log_path
     }
 
     /// Log an event
@@ -303,6 +313,39 @@ mod tests {
 
         // File should not exist since logging is disabled
         assert!(!tmp.path().join("audit.log").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn audit_logger_rotates_at_max_size() -> Result<()> {
+        let tmp = TempDir::new()?;
+        let config = AuditConfig {
+            enabled: true,
+            max_size_mb: 0, // 0 MB = rotate immediately
+            ..Default::default()
+        };
+        let logger = AuditLogger::new(config, tmp.path().to_path_buf())?;
+
+        // Write a first event to create the log
+        let event = AuditEvent::new(AuditEventType::CommandExecution);
+        logger.log(&event)?;
+        let log_path = tmp.path().join("audit.log");
+        assert!(log_path.exists());
+
+        // Write a second event — should trigger rotation first
+        let event2 = AuditEvent::new(AuditEventType::SecurityEvent);
+        logger.log(&event2)?;
+
+        // The rotated file should exist
+        let rotated = format!("{}.1.log", log_path.display());
+        assert!(
+            std::path::Path::new(&rotated).exists(),
+            "Rotated log file should exist at {rotated}"
+        );
+
+        // The main log should still exist (with the new event)
+        assert!(log_path.exists());
+
         Ok(())
     }
 }

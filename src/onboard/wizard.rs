@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: EUPL-1.2
+// Copyright (c) 2026 Benjamin Küttner <benjamin.kuettner@icloud.com>
+// Patent Pending — DE Gebrauchsmuster, filed 2026-02-23
+
 use crate::config::schema::{IrcConfig, WhatsAppConfig};
 use crate::config::{
     AutonomyConfig, BrowserConfig, ChannelsConfig, ComposioConfig, Config, DiscordConfig,
@@ -124,6 +128,9 @@ pub fn run_wizard() -> Result<Config> {
         hardware: hardware_config,
         agents: std::collections::HashMap::new(),
         security: crate::config::SecurityConfig::default(),
+        stt: crate::config::SttConfig::default(),
+        mcp: crate::config::McpConfig::default(),
+        family: crate::config::FamilyConfig::default(),
     };
 
     println!(
@@ -319,6 +326,9 @@ pub fn run_quick_setup(
         hardware: HardwareConfig::default(),
         agents: std::collections::HashMap::new(),
         security: crate::config::SecurityConfig::default(),
+        stt: crate::config::SttConfig::default(),
+        mcp: crate::config::McpConfig::default(),
+        family: crate::config::FamilyConfig::default(),
     };
 
     config.save()?;

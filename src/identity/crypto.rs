@@ -1,11 +1,19 @@
+// SPDX-License-Identifier: EUPL-1.2
+// Copyright (c) 2026 Benjamin Küttner <benjamin.kuettner@icloud.com>
+// Patent Pending — DE Gebrauchsmuster, filed 2026-02-23
+
 use anyhow::{Context, Result};
-use k256::ecdsa::{SigningKey, VerifyingKey, Signature, signature::Signer};
+use k256::ecdsa::{signature::Signer, Signature, SigningKey, VerifyingKey};
 use rand::rngs::OsRng;
-use std::path::Path;
 use std::fs;
+use std::path::Path;
+
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 /// Represents the agent's cryptographic identity (private key).
+#[derive(Zeroize, ZeroizeOnDrop)]
 pub struct AgentKey {
+    #[zeroize(skip)] // k256::SigningKey manages its own zeroization or is opaque
     signing_key: SigningKey,
 }
 
@@ -19,8 +27,8 @@ impl AgentKey {
     /// Load key from a raw binary file (32 bytes).
     pub fn load_from_file(path: &Path) -> Result<Self> {
         let bytes = fs::read(path).context("Failed to read key file")?;
-        let signing_key = SigningKey::from_bytes(bytes.as_slice().into())
-            .context("Invalid key format")?;
+        let signing_key =
+            SigningKey::from_bytes(bytes.as_slice().into()).context("Invalid key format")?;
         Ok(Self { signing_key })
     }
 

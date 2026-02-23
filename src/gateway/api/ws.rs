@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: EUPL-1.2
+// Copyright (c) 2026 Benjamin Küttner <benjamin.kuettner@icloud.com>
+// Patent Pending — DE Gebrauchsmuster, filed 2026-02-23
+
 use axum::{
     extract::{ws::{Message, WebSocket, WebSocketUpgrade}, State, Query},
     response::IntoResponse,
@@ -7,6 +11,8 @@ use crate::gateway::AppState;
 use super::types::WsMessage;
 use super::auth::AuthQuery;
 use serde_json;
+use base64::Engine;
+use uuid::Uuid;
 
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
@@ -64,53 +70,113 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
     }
 }
 
+async fn handle_text_interaction(content: String, socket: &mut WebSocket, state: &AppState) {
+    // 1. Store user message in memory for Sigil scanning (Crucial step!)
+    if state.auto_save {
+        let key = format!("user_msg_{}", Uuid::new_v4());
+        let _ = state
+            .mem
+            .store(&key, &content, crate::memory::MemoryCategory::Conversation)
+            .await;
+    }
+
+    // 2. Prepare observer and channels
+    let (thought_tx, mut thought_rx) = tokio::sync::mpsc::unbounded_channel();
+    let observer = WsObserver::new(thought_tx);
+    
+    let model = state.model.read().await.clone();
+    let state_clone = state.clone();
+    let content_clone = content.clone();
+    
+    // Channel for the final result
+    let (result_tx, mut result_rx) = tokio::sync::mpsc::channel(1);
+
+    tokio::spawn(async move {
+        // Build context preamble (same as loop_.rs)
+        // We do a simplified version here: retrieve relevant memories first
+        let context = if let Ok(entries) = state_clone.mem.recall(&content_clone, 5).await {
+            if entries.is_empty() {
+                String::new()
+            } else {
+                let mut ctx = String::from("[Memory context]\n");
+                for entry in entries {
+                    use std::fmt::Write;
+                    let _ = writeln!(ctx, "- {}: {}", entry.key, entry.content);
+                }
+                ctx.push('\n');
+                ctx
+            }
+        } else {
+            String::new()
+        };
+
+        let enriched = if context.is_empty() {
+            content_clone
+        } else {
+            format!("{context}{content_clone}")
+        };
+
+        // Read dynamic config
+        let system_prompt = state_clone.system_prompt.read().await.clone();
+        let temperature = *state_clone.temperature.read().await;
+
+        let mut history = vec![
+            crate::providers::ChatMessage::system(&system_prompt),
+            crate::providers::ChatMessage::user(&enriched),
+        ];
+
+        let res = crate::agent::loop_::run_tool_call_loop(
+            state_clone.provider.as_ref(),
+            &mut history,
+            state_clone.tools_registry.as_ref(),
+            &observer,
+            "dashboard",
+            &model,
+            temperature,
+        ).await;
+        let _ = result_tx.send(res).await;
+    });
+
+    // Handle streaming thoughts and the final result
+    loop {
+        tokio::select! {
+             Some(thought) = thought_rx.recv() => {
+                if let Ok(json) = serde_json::to_string(&thought) {
+                    let _ = socket.send(Message::Text(json.into())).await;
+                }
+            }
+            Some(res) = result_rx.recv() => {
+                match res {
+                    Ok(reply) => {
+                        let resp_msg = WsMessage::Text {
+                            content: reply,
+                            sender: "agent".into(),
+                            is_final: true,
+                        };
+                        if let Ok(json) = serde_json::to_string(&resp_msg) {
+                            let _ = socket.send(Message::Text(json.into())).await;
+                        }
+                    }
+                    Err(e) => {
+                        let err_msg = WsMessage::Error {
+                            code: "AGENT_ERROR".into(),
+                            message: e.to_string(),
+                        };
+                        if let Ok(json) = serde_json::to_string(&err_msg) {
+                            let _ = socket.send(Message::Text(json.into())).await;
+                        }
+                    }
+                }
+                break;
+            }
+        }
+    }
+}
+
 async fn process_message(msg: WsMessage, socket: &mut WebSocket, state: &AppState) {
     match msg {
         WsMessage::Text { content, .. } => {
-            // Echo user message back as confirmation (optional)
-            // Call LLM Agent
-            
-            // Build chat history (simplified for now)
-            let mut history = vec![
-                crate::providers::ChatMessage::system(state.system_prompt.as_str()),
-                crate::providers::ChatMessage::user(&content),
-            ];
-
-            // Trigger Agent Loop
-            // Note: In a real implementation we would stream tokens back.
-            // For MVP, we wait for full response.
-            
-            let response = crate::agent::loop_::run_tool_call_loop(
-                state.provider.as_ref(),
-                &mut history,
-                state.tools_registry.as_ref(),
-                state.observer.as_ref(),
-                "dashboard",
-                &state.model,
-                state.temperature,
-            ).await;
-
-            match response {
-                Ok(reply) => {
-                    let resp_msg = WsMessage::Text {
-                        content: reply,
-                        sender: "agent".into(),
-                        is_final: true,
-                    };
-                    if let Ok(json) = serde_json::to_string(&resp_msg) {
-                        let _ = socket.send(Message::Text(json.into())).await;
-                    }
-                }
-                Err(e) => {
-                    let err_msg = WsMessage::Error {
-                        code: "AGENT_ERROR".into(),
-                        message: e.to_string(),
-                    };
-                    if let Ok(json) = serde_json::to_string(&err_msg) {
-                        let _ = socket.send(Message::Text(json.into())).await;
-                    }
-                }
-            }
+            handle_text_interaction(content, socket, state).await;
         }
         WsMessage::Audio { data, format } => {
             tracing::info!("Received audio chunk: {} bytes, format: {}", data.len(), format);
@@ -125,15 +191,46 @@ async fn process_message(msg: WsMessage, socket: &mut WebSocket, state: &AppStat
                     let _ = socket.send(Message::Text(json.into())).await;
                 }
             } else {
-                // TODO: Implement STT here
-                // 1. Decode base64 `data`
-                // 2. Feed to STT engine (e.g. Whisper)
+                // 1. Decode base64
+                let audio_bytes = match base64::engine::general_purpose::STANDARD.decode(&data) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        tracing::error!("Failed to decode audio base64: {}", e);
+                         let _ = socket.send(Message::Text(serde_json::to_string(&WsMessage::Error {
+                            code: "AUDIO_DECODE_ERROR".into(),
+                            message: "Invalid base64 audio data".into(),
+                        }).unwrap().into())).await;
+                        return;
+                    }
+                };
+
+                // 2. Transcribe
+                // Send a thought first so user knows we are processing
+                let _ = socket.send(Message::Text(serde_json::to_string(&WsMessage::Thought {
+                    content: "👂 Listening...".into()
+                }).unwrap().into())).await;
+
+                let transcription = match state.stt.transcribe(audio_bytes, &format).await {
+                    Ok(t) => t,
+                    Err(e) => {
+                        tracing::error!("STT error: {}", e);
+                        let _ = socket.send(Message::Text(serde_json::to_string(&WsMessage::Error {
+                            code: "STT_ERROR".into(),
+                            message: "Speech-to-text failed".into(),
+                        }).unwrap().into())).await;
+                        return;
+                    }
+                };
                 
-                // Ack
-                let ack = WsMessage::Control { event: "audio_received".into() };
-                 if let Ok(json) = serde_json::to_string(&ack) {
-                    let _ = socket.send(Message::Text(json.into())).await;
-                }
+                tracing::info!("Transcribed audio: '{}'", transcription);
+
+                // Send transcription back to UI as a 'thought'
+                let _ = socket.send(Message::Text(serde_json::to_string(&WsMessage::Thought {
+                    content: format!("🎤 Heard: \"{}\"", transcription)
+                }).unwrap().into())).await;
+
+                // 3. Process as text message
+                handle_text_interaction(transcription, socket, state).await;
             }
         }
         WsMessage::Control { event } => {
@@ -152,5 +249,49 @@ async fn process_message(msg: WsMessage, socket: &mut WebSocket, state: &AppStat
             }
         }
         _ => {}
+    }
+}
+
+/// A specialized observer that streams agent progress over a WebSocket.
+struct WsObserver {
+    tx: tokio::sync::mpsc::UnboundedSender<WsMessage>,
+}
+
+impl WsObserver {
+    fn new(tx: tokio::sync::mpsc::UnboundedSender<WsMessage>) -> Self {
+        Self { tx }
+    }
+}
+
+impl crate::observability::Observer for WsObserver {
+    fn name(&self) -> &str {
+        "websocket"
+    }
+
+    fn record_event(&self, event: &crate::observability::ObserverEvent) {
+        use crate::observability::ObserverEvent;
+        
+        // Convert internal events to UI thoughts
+        let thought = match event {
+            ObserverEvent::ToolCallStart { tool } => {
+                Some(format!("🔧 Executing tool: {}...", tool))
+            }
+            ObserverEvent::ToolCall { tool, duration, success } => {
+                let status = if *success { "Completed" } else { "Failed" };
+                Some(format!("✅ {} {} ({}ms)", tool, status, duration.as_millis()))
+            }
+            ObserverEvent::LlmRequest { model, .. } => {
+                Some(format!("🧠 Consulting {}...", model))
+            }
+            _ => None,
+        };
+
+        if let Some(content) = thought {
+            let _ = self.tx.send(WsMessage::Thought { content });
+        }
+    }
+
+    fn record_metric(&self, _metric: &crate::observability::traits::ObserverMetric) {
+        // We don't stream raw metrics over chat WS yet
     }
 }

@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: EUPL-1.2
+// Copyright (c) 2026 Benjamin Küttner <benjamin.kuettner@icloud.com>
+// Patent Pending — DE Gebrauchsmuster, filed 2026-02-23
+
+use crate::identity::soul::TrustLevel;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -90,7 +95,20 @@ pub struct SecurityPolicy {
     pub max_cost_per_day_cents: u32,
     pub require_approval_for_medium_risk: bool,
     pub block_high_risk_commands: bool,
+    pub enabled_skills: Vec<String>,
+    pub disabled_skills: Vec<String>,
+    pub confirmation_required: std::collections::HashMap<String, String>,
     pub tracker: ActionTracker,
+    /// Current user's trust level (resolved from Soul identity bindings).
+    pub trust_level: TrustLevel,
+    /// Minimum trust required for shell command execution.
+    pub required_trust_for_shell: TrustLevel,
+    /// Minimum trust required for agent-to-agent delegation.
+    pub required_trust_for_delegation: TrustLevel,
+    /// Minimum trust required for vault/secret access.
+    pub required_trust_for_vault: TrustLevel,
+    /// Minimum trust required for MCP tool calls.
+    pub required_trust_for_mcp: TrustLevel,
 }
 
 impl Default for SecurityPolicy {
@@ -140,6 +158,28 @@ impl Default for SecurityPolicy {
             require_approval_for_medium_risk: true,
             block_high_risk_commands: true,
             tracker: ActionTracker::new(),
+            enabled_skills: vec!["calendar_read".into(), "weather".into(), "reminders".into()],
+            disabled_skills: vec![
+                "file_system".into(),
+                "terminal".into(),
+                "email_send".into(),
+                "github_write".into(),
+            ],
+            confirmation_required: {
+                let mut m = std::collections::HashMap::new();
+                m.insert("email_send".into(), "always".into());
+                m.insert("file_write".into(), "always".into());
+                m.insert("file_delete".into(), "always".into());
+                m.insert("terminal_execute".into(), "always".into());
+                m.insert("external_api_call".into(), "always".into());
+                m
+            },
+            // Trust defaults: user starts at Low, sensitive operations require High
+            trust_level: TrustLevel::Low,
+            required_trust_for_shell: TrustLevel::Low,
+            required_trust_for_delegation: TrustLevel::High,
+            required_trust_for_vault: TrustLevel::High,
+            required_trust_for_mcp: TrustLevel::Low,
         }
     }
 }
@@ -168,6 +208,49 @@ fn skip_env_assignments(s: &str) -> &str {
 }
 
 impl SecurityPolicy {
+    /// Check if a skill is allowed to run.
+    pub fn is_skill_allowed(&self, skill: &str) -> bool {
+        // If explicitly disabled, it's blocked.
+        if self.disabled_skills.iter().any(|s| s == skill) {
+            return false;
+        }
+
+        // If explicitly enabled, it's allowed.
+        if self.enabled_skills.iter().any(|s| s == skill) {
+            return true;
+        }
+
+        // Default deny if not in enabled list?
+        // For now, let's assume if it's not disabled, we check if it's in enabled.
+        // If enabled list is empty, maybe allow all?
+        // But "Least Privilege" says deny by default.
+        // Let's implement strict allowlist if allowlist is not empty.
+        if !self.enabled_skills.is_empty() {
+            return false;
+        }
+
+        // If no explicit lists, allow (backward compatibility) or deny?
+        // Given "Secure by Default", we should probably default to deny for critical skills if undefined, but that's hard to hardcode here without a list of critical skills.
+        // For now: if not disabled and allowlist is empty, allow.
+        true
+    }
+
+    /// Check if an action requires user confirmation.
+    pub fn requires_confirmation(&self, skill: &str, action: &str) -> bool {
+        // Check exact match "skill:action"
+        let key = format!("{}:{}", skill, action);
+        if let Some(policy) = self.confirmation_required.get(&key) {
+            return policy == "always";
+        }
+
+        // Check action match "action" (e.g. "file_write")
+        if let Some(policy) = self.confirmation_required.get(action) {
+            return policy == "always";
+        }
+
+        false
+    }
+
     /// Classify command risk. Any high-risk segment marks the whole command high.
     pub fn command_risk_level(&self, command: &str) -> CommandRiskLevel {
         let mut normalized = command.to_string();
@@ -488,6 +571,7 @@ impl SecurityPolicy {
     /// Build from config sections
     pub fn from_config(
         autonomy_config: &crate::config::AutonomyConfig,
+        security_config: &crate::config::SecurityConfig,
         workspace_dir: &Path,
     ) -> Self {
         Self {
@@ -500,8 +584,42 @@ impl SecurityPolicy {
             max_cost_per_day_cents: autonomy_config.max_cost_per_day_cents,
             require_approval_for_medium_risk: autonomy_config.require_approval_for_medium_risk,
             block_high_risk_commands: autonomy_config.block_high_risk_commands,
+            enabled_skills: security_config.enabled_skills.clone(),
+            disabled_skills: security_config.disabled_skills.clone(),
+            confirmation_required: security_config.confirmation_required.clone(),
             tracker: ActionTracker::new(),
+            trust_level: TrustLevel::Low,
+            required_trust_for_shell: crate::config::TrustConfig::parse_level(
+                &security_config.trust.shell,
+            ),
+            required_trust_for_delegation: crate::config::TrustConfig::parse_level(
+                &security_config.trust.delegation,
+            ),
+            required_trust_for_vault: crate::config::TrustConfig::parse_level(
+                &security_config.trust.vault,
+            ),
+            required_trust_for_mcp: crate::config::TrustConfig::parse_level(
+                &security_config.trust.mcp,
+            ),
         }
+    }
+
+    /// Check if the current trust level meets a requirement.
+    /// Returns `Ok(())` if allowed, `Err(reason)` if denied.
+    pub fn check_trust(&self, required: TrustLevel) -> Result<(), String> {
+        if self.trust_level >= required {
+            Ok(())
+        } else {
+            Err(format!(
+                "Requires {:?} trust, current level is {:?}",
+                required, self.trust_level
+            ))
+        }
+    }
+
+    /// Set the trust level (called after identity resolution).
+    pub fn set_trust_level(&mut self, level: TrustLevel) {
+        self.trust_level = level;
     }
 }
 
@@ -786,7 +904,8 @@ mod tests {
             block_high_risk_commands: false,
         };
         let workspace = PathBuf::from("/tmp/test-workspace");
-        let policy = SecurityPolicy::from_config(&autonomy_config, &workspace);
+        let security = crate::config::SecurityConfig::default();
+        let policy = SecurityPolicy::from_config(&autonomy_config, &security, &workspace);
 
         assert_eq!(policy.autonomy, AutonomyLevel::Full);
         assert!(!policy.workspace_only);
@@ -1099,7 +1218,8 @@ mod tests {
             block_high_risk_commands: true,
         };
         let workspace = PathBuf::from("/tmp/test");
-        let policy = SecurityPolicy::from_config(&autonomy_config, &workspace);
+        let security = crate::config::SecurityConfig::default();
+        let policy = SecurityPolicy::from_config(&autonomy_config, &security, &workspace);
         assert_eq!(policy.tracker.count(), 0);
         assert!(!policy.is_rate_limited());
     }
@@ -1218,5 +1338,176 @@ mod tests {
                 "Default forbidden_paths must include {dot}"
             );
         }
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // PERFORMANCE BENCHMARKS
+    // Run with: cargo test bench_ -- --nocapture
+    // These numbers feed directly into the patent performance claims.
+    // ══════════════════════════════════════════════════════════
+
+    fn mean_ns(total: std::time::Duration, n: u64) -> f64 {
+        (total.as_nanos() as f64) / (n as f64)
+    }
+
+    #[test]
+    fn bench_is_command_allowed() {
+        let policy = SecurityPolicy::default();
+        let n = 100_000u64;
+
+        let start = std::time::Instant::now();
+        for _ in 0..n {
+            let _ = policy.is_command_allowed("git status");
+        }
+        let ns = mean_ns(start.elapsed(), n);
+        println!(
+            "\n[BENCH] is_command_allowed('git status')      {:>9.2} ns/op  (n={})",
+            ns, n
+        );
+        assert!(ns < 10_000.0, "must be <10µs, got {ns:.1}ns");
+    }
+
+    #[test]
+    fn bench_is_command_allowed_blocked() {
+        let policy = SecurityPolicy::default();
+        let n = 100_000u64;
+
+        let start = std::time::Instant::now();
+        for _ in 0..n {
+            let _ = policy.is_command_allowed("curl http://evil.com");
+        }
+        let ns = mean_ns(start.elapsed(), n);
+        println!(
+            "\n[BENCH] is_command_allowed('curl …') [block]  {:>9.2} ns/op  (n={})",
+            ns, n
+        );
+        assert!(ns < 10_000.0, "must be <10µs");
+    }
+
+    #[test]
+    fn bench_command_risk_level() {
+        let policy = SecurityPolicy::default();
+        let cmds = [
+            "ls -la",
+            "git commit -m 'x'",
+            "rm -rf /tmp/x",
+            "curl http://e.com",
+        ];
+        let n = 100_000u64;
+
+        let start = std::time::Instant::now();
+        for i in 0..n {
+            let _ = policy.command_risk_level(cmds[(i % 4) as usize]);
+        }
+        let ns = mean_ns(start.elapsed(), n);
+        println!(
+            "\n[BENCH] command_risk_level() [4 patterns]     {:>9.2} ns/op  (n={})",
+            ns, n
+        );
+        assert!(ns < 20_000.0, "must be <20µs");
+    }
+
+    #[test]
+    fn bench_is_path_allowed_workspace() {
+        let policy = SecurityPolicy::default();
+        let n = 100_000u64;
+
+        let start = std::time::Instant::now();
+        for _ in 0..n {
+            let _ = policy.is_path_allowed("src/identity/soul.rs");
+        }
+        let ns = mean_ns(start.elapsed(), n);
+        println!(
+            "\n[BENCH] is_path_allowed() [workspace]         {:>9.2} ns/op  (n={})",
+            ns, n
+        );
+        assert!(ns < 5_000.0, "must be <5µs");
+    }
+
+    #[test]
+    fn bench_is_path_allowed_blocked() {
+        let policy = SecurityPolicy::default();
+        let n = 100_000u64;
+
+        let start = std::time::Instant::now();
+        for _ in 0..n {
+            let _ = policy.is_path_allowed("/etc/passwd");
+        }
+        let ns = mean_ns(start.elapsed(), n);
+        println!(
+            "\n[BENCH] is_path_allowed('/etc/passwd') [block] {:>9.2} ns/op  (n={})",
+            ns, n
+        );
+        assert!(ns < 5_000.0, "must be <5µs");
+    }
+
+    #[test]
+    fn bench_check_trust() {
+        let policy = SecurityPolicy::default();
+        let n = 100_000u64;
+
+        let start = std::time::Instant::now();
+        for _ in 0..n {
+            let _ = policy.check_trust(TrustLevel::Low);
+        }
+        let ns = mean_ns(start.elapsed(), n);
+        println!(
+            "\n[BENCH] check_trust(Low)                      {:>9.2} ns/op  (n={})",
+            ns, n
+        );
+        assert!(ns < 1_000.0, "must be <1µs");
+    }
+
+    #[test]
+    fn bench_is_skill_allowed() {
+        let policy = SecurityPolicy::default();
+        let n = 100_000u64;
+
+        let start = std::time::Instant::now();
+        for _ in 0..n {
+            let _ = policy.is_skill_allowed("calendar_read");
+        }
+        let ns = mean_ns(start.elapsed(), n);
+        println!(
+            "\n[BENCH] is_skill_allowed('calendar_read')     {:>9.2} ns/op  (n={})",
+            ns, n
+        );
+        assert!(ns < 2_000.0, "must be <2µs");
+    }
+
+    /// Simulates the full per-call security gate stack:
+    /// skill check → trust check → command check → risk classification
+    /// This is the number that goes in the patent as overhead per agent interaction.
+    #[test]
+    fn bench_full_gate_stack() {
+        let policy = SecurityPolicy::default();
+        let n = 100_000u64;
+
+        let start = std::time::Instant::now();
+        for _ in 0..n {
+            let _ = policy.is_skill_allowed("calendar_read");
+            let _ = policy.check_trust(TrustLevel::Low);
+            let _ = policy.is_command_allowed("ls");
+            let _ = policy.command_risk_level("ls");
+        }
+        let elapsed = start.elapsed();
+        let ns = mean_ns(elapsed, n);
+        let us = ns / 1_000.0;
+
+        println!("\n╔══════════════════════════════════════════════════════════╗");
+        println!("║        MyMolt Core — Performance Benchmark Results       ║");
+        println!("╠══════════════════════════════════════════════════════════╣");
+        println!(
+            "║  full_gate_stack() [4 ops]:  {:>7.3} µs/op  (n={})   ║",
+            us, n
+        );
+        println!("║  → skill_allowed + trust_check + cmd_allowed + risk      ║");
+        println!("║  Target for patent claim: < 1.2 µs                       ║");
+        println!("╚══════════════════════════════════════════════════════════╝");
+
+        assert!(
+            us < 5.0,
+            "full gate stack must be <5µs in debug build, got {us:.3}µs"
+        );
     }
 }

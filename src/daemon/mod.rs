@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: EUPL-1.2
+// Copyright (c) 2026 Benjamin Küttner <benjamin.kuettner@icloud.com>
+// Patent Pending — DE Gebrauchsmuster, filed 2026-02-23
+
 use crate::config::Config;
 use anyhow::Result;
 use chrono::Utc;
@@ -24,6 +28,9 @@ pub async fn run(config: Config, host: String, port: u16) -> Result<()> {
     }
 
     let mut handles: Vec<JoinHandle<()>> = vec![spawn_state_writer(config.clone())];
+
+    // Spawn Embedded Hoodik Server
+    handles.push(hoodik::spawn_server(&config));
 
     {
         let gateway_cfg = config.clone();
@@ -132,6 +139,8 @@ fn spawn_state_writer(config: Config) -> JoinHandle<()> {
         }
     })
 }
+
+pub mod hoodik;
 
 fn spawn_component_supervisor<F, Fut>(
     name: &'static str,

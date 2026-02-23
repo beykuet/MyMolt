@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: EUPL-1.2
+// Copyright (c) 2026 Benjamin Küttner <benjamin.kuettner@icloud.com>
+// Patent Pending — DE Gebrauchsmuster, filed 2026-02-23
+
 //! Axum-based HTTP gateway with proper HTTP/1.1 compliance, body limits, and timeouts.
 //!
 //! This module replaces the raw TCP implementation with axum for:
@@ -62,8 +66,11 @@ fn normalize_gateway_reply(reply: String) -> String {
 }
 
 async fn gateway_agent_reply(state: &AppState, message: &str) -> Result<String> {
+    let system_prompt = state.system_prompt.read().await;
+    let temperature = *state.temperature.read().await;
+
     let mut history = vec![
-        ChatMessage::system(state.system_prompt.as_str()),
+        ChatMessage::system(system_prompt.as_str()),
         ChatMessage::user(message),
     ];
 
@@ -73,8 +80,8 @@ async fn gateway_agent_reply(state: &AppState, message: &str) -> Result<String> 
         state.tools_registry.as_ref(),
         state.observer.as_ref(),
         "gateway",
-        &state.model,
-        state.temperature,
+        &state.model.read().await,
+        temperature,
     )
     .await?;
 
@@ -126,6 +133,9 @@ impl SlidingWindowRateLimiter {
 pub struct GatewayRateLimiter {
     pair: SlidingWindowRateLimiter,
     webhook: SlidingWindowRateLimiter,
+    vpn: SlidingWindowRateLimiter,
+    diary: SlidingWindowRateLimiter,
+    model_switch: SlidingWindowRateLimiter,
 }
 
 impl GatewayRateLimiter {
@@ -134,6 +144,9 @@ impl GatewayRateLimiter {
         Self {
             pair: SlidingWindowRateLimiter::new(pair_per_minute, window),
             webhook: SlidingWindowRateLimiter::new(webhook_per_minute, window),
+            vpn: SlidingWindowRateLimiter::new(5, window),            // 5 VPN ops/min
+            diary: SlidingWindowRateLimiter::new(20, window),          // 20 diary writes/min
+            model_switch: SlidingWindowRateLimiter::new(3, window),    // 3 model switches/min
         }
     }
 
@@ -143,6 +156,18 @@ impl GatewayRateLimiter {
 
     fn allow_webhook(&self, key: &str) -> bool {
         self.webhook.allow(key)
+    }
+
+    pub fn allow_vpn(&self, key: &str) -> bool {
+        self.vpn.allow(key)
+    }
+
+    pub fn allow_diary(&self, key: &str) -> bool {
+        self.diary.allow(key)
+    }
+
+    pub fn allow_model_switch(&self, key: &str) -> bool {
+        self.model_switch.allow(key)
     }
 }
 
@@ -179,6 +204,64 @@ impl IdempotencyStore {
     }
 }
 
+/// Cryptographically secure OIDC state parameter store.
+///
+/// Generates random state tokens, stores them with a TTL, and validates
+/// (consumes) them on callback. This prevents CSRF attacks in the OAuth flow.
+#[derive(Debug)]
+pub struct OidcStateStore {
+    ttl: Duration,
+    /// Maps state_token → (provider_id, created_at)
+    states: Mutex<HashMap<String, (String, Instant)>>,
+}
+
+impl OidcStateStore {
+    pub fn new(ttl: Duration) -> Self {
+        Self {
+            ttl,
+            states: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Generate a cryptographically random state token and store it.
+    /// Returns the generated token.
+    pub fn generate(&self, provider_id: &str) -> String {
+        use rand::Rng;
+        use std::fmt::Write;
+        let buf: [u8; 32] = rand::thread_rng().gen();
+        let mut token = String::with_capacity(64);
+        for byte in &buf {
+            write!(token, "{byte:02x}").unwrap();
+        }
+
+        let mut states = self
+            .states
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+
+        // Purge expired entries while we have the lock
+        let now = Instant::now();
+        states.retain(|_, (_, ts)| now.duration_since(*ts) < self.ttl);
+
+        states.insert(token.clone(), (provider_id.to_owned(), now));
+        token
+    }
+
+    /// Validate and consume a state token. Returns the provider_id if valid.
+    /// The token is removed on successful validation (single-use).
+    pub fn validate(&self, state_token: &str) -> Option<String> {
+        let mut states = self
+            .states
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+
+        let now = Instant::now();
+        states.retain(|_, (_, ts)| now.duration_since(*ts) < self.ttl);
+
+        states.remove(state_token).map(|(provider_id, _)| provider_id)
+    }
+}
+
 fn client_key_from_headers(headers: &HeaderMap) -> String {
     for header_name in ["X-Forwarded-For", "X-Real-IP"] {
         if let Some(value) = headers.get(header_name).and_then(|v| v.to_str().ok()) {
@@ -197,9 +280,9 @@ pub struct AppState {
     pub provider: Arc<dyn Provider>,
     pub observer: Arc<dyn Observer>,
     pub tools_registry: Arc<Vec<Box<dyn Tool>>>,
-    pub system_prompt: Arc<String>,
-    pub model: String,
-    pub temperature: f64,
+    pub system_prompt: Arc<tokio::sync::RwLock<String>>,
+    pub model: Arc<tokio::sync::RwLock<String>>,
+    pub temperature: Arc<tokio::sync::RwLock<f64>>,
     pub mem: Arc<dyn Memory>,
     pub auto_save: bool,
     pub webhook_secret: Option<Arc<str>>,
@@ -209,11 +292,22 @@ pub struct AppState {
     pub whatsapp: Option<Arc<WhatsAppChannel>>,
     /// `WhatsApp` app secret for webhook signature verification (`X-Hub-Signature-256`)
     pub whatsapp_app_secret: Option<Arc<str>>,
-    pub soul: Arc<Mutex<crate::identity::Soul>>,
+    pub soul: Arc<tokio::sync::Mutex<crate::identity::Soul>>,
     pub voice_echo_enabled: Arc<std::sync::atomic::AtomicBool>,
     pub identity_config: Arc<crate::config::IdentityConfig>,
     pub vpn_manager: Arc<crate::network::VpnManager>,
+    pub vault: Arc<crate::security::VaultManager>,
+    pub audit: Arc<crate::security::AuditLogger>,
+    pub adblock: Arc<crate::network::adblock::DnsBlocker>,
+    pub stt: Arc<dyn crate::providers::stt::SttProvider>,
     pub public_url: String,
+    pub oidc_states: Arc<OidcStateStore>,
+    pub workspace_dir: std::path::PathBuf,
+    pub config: Arc<tokio::sync::RwLock<Config>>,
+    /// Monotonic start instant for uptime calculation.
+    pub started_at: std::time::Instant,
+    /// Confirmation gate for interactive approval flow.
+    pub confirm_gate: Arc<crate::security::confirmation::ConfirmationGate>,
 }
 
 /// Run the HTTP gateway using axum with proper HTTP/1.1 compliance.
@@ -228,6 +322,8 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
              [gateway] allow_public_bind = true in config.toml (NOT recommended)."
         );
     }
+    
+    let shared_config = Arc::new(tokio::sync::RwLock::new(config.clone()));
 
     let addr: SocketAddr = format!("{host}:{port}").parse()?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
@@ -239,30 +335,68 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         config.api_key.as_deref(),
         &config.reliability,
     )?);
+
+    let stt_key = providers::resolve_api_key(&config.stt.provider, config.api_key.as_deref())
+        .ok_or_else(|| anyhow::anyhow!("Stt provider {} requires an API key. Please check your config or env vars.", config.stt.provider))?;
+    let stt: Arc<dyn crate::providers::stt::SttProvider> = Arc::from(crate::providers::stt::create_stt_provider(
+        &config.stt.provider,
+        &stt_key,
+        config.stt.model.clone(),
+    )?);
     let model = config
         .default_model
         .clone()
         .unwrap_or_else(|| "anthropic/claude-sonnet-4".into());
     let temperature = config.default_temperature;
+    let audit: Arc<crate::security::AuditLogger> = Arc::new(
+        crate::security::AuditLogger::new(config.security.audit.clone(), config.workspace_dir.clone())?,
+    );
     let mem: Arc<dyn Memory> = Arc::from(memory::create_memory(
         &config.memory,
         &config.workspace_dir,
         config.api_key.as_deref(),
+        Arc::clone(&audit),
     )?);
     let observer: Arc<dyn Observer> =
         Arc::from(observability::create_observer(&config.observability));
     let runtime: Arc<dyn runtime::RuntimeAdapter> =
         Arc::from(runtime::create_runtime(&config.runtime)?);
-    let security = Arc::new(SecurityPolicy::from_config(
+    let adblock = Arc::new(crate::network::adblock::DnsBlocker::new());
+    if let Err(e) = adblock.load_defaults().await {
+        tracing::warn!("Failed to load adblock defaults: {e}");
+    }
+    
+    let mut security = SecurityPolicy::from_config(
         &config.autonomy,
+        &config.security,
         &config.workspace_dir,
-    ));
+    );
+    let actor_name;
+    {
+        let mut soul = crate::identity::soul::Soul::new(&config.workspace_dir);
+        if let Ok(()) = soul.load() {
+            let trust = soul.max_trust_level();
+            actor_name = soul.bindings.first().map(|b| format!("{}:{}", b.provider, b.id));
+            tracing::info!(?trust, ?actor_name, bindings = soul.bindings.len(), "SIGIL: Identity resolved from SOUL.md");
+            security.set_trust_level(trust);
+        } else {
+            actor_name = None;
+        }
+    }
+    let security = Arc::new(security);
 
     let composio_key = if config.composio.enabled {
         config.composio.api_key.as_deref()
     } else {
         None
     };
+
+    // Discover MCP tools from configured servers
+    let mcp_tools = crate::mcp::discover_mcp_tools(
+        &config.mcp,
+        &security,
+        &audit,
+    ).await;
 
     let tools_registry = Arc::new(tools::all_tools_with_runtime(
         &security,
@@ -274,6 +408,9 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         &config.workspace_dir,
         &config.agents,
         config.api_key.as_deref(),
+        mcp_tools,
+        Some(Arc::clone(&audit)),
+        actor_name,
     ));
     let skills = crate::skills::load_skills(&config.workspace_dir);
     let tool_descs: Vec<(&str, &str)> = tools_registry
@@ -291,7 +428,7 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
     system_prompt.push_str(&crate::agent::loop_::build_tool_instructions(
         tools_registry.as_ref(),
     ));
-    let system_prompt = Arc::new(system_prompt);
+    let system_prompt = Arc::new(tokio::sync::RwLock::new(system_prompt));
 
     // Extract webhook secret for authentication
     let webhook_secret: Option<Arc<str>> = config
@@ -398,8 +535,8 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         observer,
         tools_registry,
         system_prompt,
-        model,
-        temperature,
+        model: Arc::new(tokio::sync::RwLock::new(model)),
+        temperature: Arc::new(tokio::sync::RwLock::new(temperature)),
         mem,
         auto_save: config.memory.auto_save,
         webhook_secret,
@@ -408,7 +545,7 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         idempotency_store,
         whatsapp: whatsapp_channel,
         whatsapp_app_secret,
-        soul: Arc::new(Mutex::new({
+        soul: Arc::new(tokio::sync::Mutex::new({
             let mut s = crate::identity::Soul::new(&config.workspace_dir);
             if let Err(e) = s.load() {
                 tracing::warn!("Failed to load Soul: {e}");
@@ -418,12 +555,64 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         voice_echo_enabled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         identity_config: Arc::new(config.identity),
         vpn_manager: Arc::new(crate::network::VpnManager::new(
-            format!("{}/network/wg0.conf", config.workspace_dir.display())
+            &config.workspace_dir.join("network").join("wg0.conf")
         )),
+        vault: Arc::new(crate::security::VaultManager::new(&config.workspace_dir)),
+        audit,
+        adblock,
+        stt,
         // Use tunnel URL if available, otherwise host:port
         public_url: tunnel_url.unwrap_or_else(|| format!("http://{display_addr}")),
+        oidc_states: Arc::new(OidcStateStore::new(Duration::from_secs(600))), // 10 min TTL
+        workspace_dir: config.workspace_dir.clone(),
+        config: Arc::clone(&shared_config),
+        started_at: std::time::Instant::now(),
+        confirm_gate: crate::security::confirmation::ConfirmationGate::new(30),
     };
 
+
+use tower_http::compression::CompressionLayer;
+use tower_http::cors::{CorsLayer, AllowOrigin};
+use tower_http::services::{ServeDir, ServeFile};
+use tower_http::set_header::SetResponseHeaderLayer;
+use axum::http::HeaderValue;
+
+    // ── Security Headers Middleware ───────────────────────────
+    let security_headers = tower::ServiceBuilder::new()
+        .layer(SetResponseHeaderLayer::overriding(
+            header::X_FRAME_OPTIONS,
+            HeaderValue::from_static("DENY"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            header::X_CONTENT_TYPE_OPTIONS,
+            HeaderValue::from_static("nosniff"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            header::REFERRER_POLICY,
+            HeaderValue::from_static("strict-origin-when-cross-origin"),
+        ))
+        // Basic CSP to prevent XSS/Injection
+        .layer(SetResponseHeaderLayer::overriding(
+            header::CONTENT_SECURITY_POLICY,
+            HeaderValue::from_static("default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' ws: wss:;"),
+        ));
+
+    // ── CORS (Restricted) ─────────────────────────────────────
+    // Compute allowed origins based on config
+    let mut allowed_origins = vec![
+        "http://localhost:5173".parse::<HeaderValue>().unwrap(),
+        "http://localhost:3000".parse::<HeaderValue>().unwrap(),
+    ];
+    
+    // Add public URL if valid
+    if let Ok(origin) = state.public_url.parse::<HeaderValue>() {
+        allowed_origins.push(origin);
+    }
+
+    let cors = CorsLayer::new()
+        .allow_origin(AllowOrigin::list(allowed_origins))
+        .allow_methods(tower_http::cors::Any)
+        .allow_headers(tower_http::cors::Any);
 
     // Build router with middleware
     let app = Router::new()
@@ -439,17 +628,15 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
             StatusCode::REQUEST_TIMEOUT,
             Duration::from_secs(REQUEST_TIMEOUT_SECS),
         ))
-        .layer(
-            tower_http::cors::CorsLayer::new()
-                .allow_origin(tower_http::cors::Any)
-                .allow_methods(tower_http::cors::Any)
-                .allow_headers(tower_http::cors::Any)
-        );
+        .layer(CompressionLayer::new())
+        .layer(security_headers)
+        .layer(cors);
 
     // Run the server
+    // SPA Fallback: serve index.html for unknown routes (client-side routing)
     let app = app.fallback_service(
-        tower_http::services::ServeDir::new("frontend/dist")
-            .append_index_html_on_directories(true)
+         ServeDir::new("frontend/dist")
+            .not_found_service(ServeFile::new("frontend/dist/index.html"))
     );
 
     axum::serve(listener, app).await?;
@@ -611,7 +798,8 @@ async fn handle_webhook(
 
     match gateway_agent_reply(&state, message).await {
         Ok(reply) => {
-            let body = serde_json::json!({"response": reply, "model": state.model});
+            let model = state.model.read().await.clone();
+            let body = serde_json::json!({"response": reply, "model": model});
             (StatusCode::OK, Json(body))
         }
         Err(e) => {
@@ -1000,13 +1188,21 @@ mod tests {
         memory: Arc<dyn Memory>,
         auto_save: bool,
     ) -> AppState {
+        let tmp = tempfile::tempdir().unwrap();
+        let audit = Arc::new(
+            crate::security::AuditLogger::new(
+                crate::config::AuditConfig::default(),
+                tmp.path().to_path_buf(),
+            )
+            .unwrap(),
+        );
         AppState {
             provider,
             observer: Arc::new(crate::observability::NoopObserver),
             tools_registry: Arc::new(Vec::new()),
-            system_prompt: Arc::new("test-system-prompt".into()),
-            model: "test-model".into(),
-            temperature: 0.0,
+            system_prompt: Arc::new(tokio::sync::RwLock::new("test-system-prompt".into())),
+            model: Arc::new(tokio::sync::RwLock::new("test-model".into())),
+            temperature: Arc::new(tokio::sync::RwLock::new(0.0)),
             mem: memory,
             auto_save,
             webhook_secret: None,
@@ -1015,6 +1211,20 @@ mod tests {
             idempotency_store: Arc::new(IdempotencyStore::new(Duration::from_secs(300))),
             whatsapp: None,
             whatsapp_app_secret: None,
+            soul: Arc::new(tokio::sync::Mutex::new(crate::identity::Soul::new(tmp.path()))),
+            voice_echo_enabled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            identity_config: Arc::new(crate::config::IdentityConfig::default()),
+            vpn_manager: Arc::new(crate::network::VpnManager::new(tmp.path())),
+            vault: Arc::new(crate::security::VaultManager::new(tmp.path())),
+            audit,
+            adblock: Arc::new(crate::network::adblock::DnsBlocker::new()),
+            stt: Arc::new(crate::providers::stt::MockSttProvider::new("test transcription")),
+            public_url: "http://localhost:3000".into(),
+            oidc_states: Arc::new(OidcStateStore::new(Duration::from_secs(600))),
+            workspace_dir: tmp.path().to_path_buf(),
+            config: Arc::new(tokio::sync::RwLock::new(crate::config::Config::default())),
+            started_at: std::time::Instant::now(),
+            confirm_gate: crate::security::confirmation::ConfirmationGate::new(5),
         }
     }
 
@@ -1385,5 +1595,301 @@ mod tests {
             body,
             &signature_header
         ));
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // SlidingWindowRateLimiter Tests
+    // ══════════════════════════════════════════════════════════
+
+    #[test]
+    fn rate_limiter_allows_within_limit() {
+        let rl = SlidingWindowRateLimiter::new(3, Duration::from_secs(60));
+        assert!(rl.allow("client_a"));
+        assert!(rl.allow("client_a"));
+        assert!(rl.allow("client_a"));
+    }
+
+    #[test]
+    fn rate_limiter_blocks_over_limit() {
+        let rl = SlidingWindowRateLimiter::new(2, Duration::from_secs(60));
+        assert!(rl.allow("client_a"));
+        assert!(rl.allow("client_a"));
+        assert!(!rl.allow("client_a")); // 3rd request → denied
+    }
+
+    #[test]
+    fn rate_limiter_tracks_keys_independently() {
+        let rl = SlidingWindowRateLimiter::new(1, Duration::from_secs(60));
+        assert!(rl.allow("client_a")); // a: 1/1
+        assert!(rl.allow("client_b")); // b: 1/1 (separate key)
+        assert!(!rl.allow("client_a")); // a: over limit
+        assert!(!rl.allow("client_b")); // b: over limit
+    }
+
+    #[test]
+    fn rate_limiter_zero_limit_allows_all() {
+        let rl = SlidingWindowRateLimiter::new(0, Duration::from_secs(60));
+        for _ in 0..100 {
+            assert!(rl.allow("any_client"));
+        }
+    }
+
+    #[test]
+    fn rate_limiter_limit_of_one() {
+        let rl = SlidingWindowRateLimiter::new(1, Duration::from_secs(60));
+        assert!(rl.allow("x"));
+        assert!(!rl.allow("x"));
+    }
+
+    #[test]
+    fn rate_limiter_empty_key_works() {
+        let rl = SlidingWindowRateLimiter::new(2, Duration::from_secs(60));
+        assert!(rl.allow(""));
+        assert!(rl.allow(""));
+        assert!(!rl.allow(""));
+    }
+
+    #[test]
+    fn rate_limiter_unicode_key_works() {
+        let rl = SlidingWindowRateLimiter::new(1, Duration::from_secs(60));
+        assert!(rl.allow("用户🦀"));
+        assert!(!rl.allow("用户🦀"));
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // GatewayRateLimiter Tests
+    // ══════════════════════════════════════════════════════════
+
+    #[test]
+    fn gateway_rate_limiter_creates_with_limits() {
+        let grl = GatewayRateLimiter::new(10, 20);
+        // Should allow initial requests
+        assert!(grl.allow_pair("user1"));
+        assert!(grl.allow_webhook("wh1"));
+        assert!(grl.allow_vpn("vpn1"));
+        assert!(grl.allow_diary("diary1"));
+        assert!(grl.allow_model_switch("ms1"));
+    }
+
+    #[test]
+    fn gateway_rate_limiter_vpn_limit_is_5() {
+        let grl = GatewayRateLimiter::new(100, 100);
+        for _ in 0..5 {
+            assert!(grl.allow_vpn("user"));
+        }
+        assert!(!grl.allow_vpn("user")); // 6th → denied
+    }
+
+    #[test]
+    fn gateway_rate_limiter_model_switch_limit_is_3() {
+        let grl = GatewayRateLimiter::new(100, 100);
+        for _ in 0..3 {
+            assert!(grl.allow_model_switch("user"));
+        }
+        assert!(!grl.allow_model_switch("user")); // 4th → denied
+    }
+
+    #[test]
+    fn gateway_rate_limiter_diary_limit_is_20() {
+        let grl = GatewayRateLimiter::new(100, 100);
+        for _ in 0..20 {
+            assert!(grl.allow_diary("user"));
+        }
+        assert!(!grl.allow_diary("user")); // 21st → denied
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // IdempotencyStore Tests
+    // ══════════════════════════════════════════════════════════
+
+    #[test]
+    fn idempotency_first_key_is_new() {
+        let store = IdempotencyStore::new(Duration::from_secs(300));
+        assert!(store.record_if_new("request-1"));
+    }
+
+    #[test]
+    fn idempotency_duplicate_key_is_not_new() {
+        let store = IdempotencyStore::new(Duration::from_secs(300));
+        assert!(store.record_if_new("request-1"));
+        assert!(!store.record_if_new("request-1"));
+    }
+
+    #[test]
+    fn idempotency_different_keys_are_new() {
+        let store = IdempotencyStore::new(Duration::from_secs(300));
+        assert!(store.record_if_new("request-1"));
+        assert!(store.record_if_new("request-2"));
+        assert!(store.record_if_new("request-3"));
+    }
+
+    #[test]
+    fn idempotency_empty_key_works() {
+        let store = IdempotencyStore::new(Duration::from_secs(300));
+        assert!(store.record_if_new(""));
+        assert!(!store.record_if_new(""));
+    }
+
+    #[test]
+    fn idempotency_many_keys_no_false_positives() {
+        let store = IdempotencyStore::new(Duration::from_secs(300));
+        for i in 0..1000 {
+            let key = format!("req-{i}");
+            assert!(store.record_if_new(&key), "Key {key} should be new");
+        }
+        // Verify duplicates are detected
+        for i in 0..1000 {
+            let key = format!("req-{i}");
+            assert!(!store.record_if_new(&key), "Key {key} should be duplicate");
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // OidcStateStore Tests (CSRF Prevention)
+    // ══════════════════════════════════════════════════════════
+
+    #[test]
+    fn oidc_state_generates_hex_token() {
+        let store = OidcStateStore::new(Duration::from_secs(300));
+        let token = store.generate("google");
+        assert_eq!(token.len(), 64); // 32 bytes = 64 hex chars
+        assert!(token.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn oidc_state_tokens_are_unique() {
+        let store = OidcStateStore::new(Duration::from_secs(300));
+        let t1 = store.generate("google");
+        let t2 = store.generate("google");
+        let t3 = store.generate("github");
+        assert_ne!(t1, t2);
+        assert_ne!(t2, t3);
+    }
+
+    #[test]
+    fn oidc_state_validate_returns_provider() {
+        let store = OidcStateStore::new(Duration::from_secs(300));
+        let token = store.generate("google");
+        let result = store.validate(&token);
+        assert_eq!(result, Some("google".to_string()));
+    }
+
+    #[test]
+    fn oidc_state_single_use_consumption() {
+        let store = OidcStateStore::new(Duration::from_secs(300));
+        let token = store.generate("google");
+        assert!(store.validate(&token).is_some()); // First use → OK
+        assert!(store.validate(&token).is_none());  // Second use → consumed
+    }
+
+    #[test]
+    fn oidc_state_rejects_unknown_token() {
+        let store = OidcStateStore::new(Duration::from_secs(300));
+        store.generate("google"); // Generate one token
+        assert!(store.validate("totally_fake_token").is_none());
+    }
+
+    #[test]
+    fn oidc_state_rejects_empty_token() {
+        let store = OidcStateStore::new(Duration::from_secs(300));
+        assert!(store.validate("").is_none());
+    }
+
+    #[test]
+    fn oidc_state_multiple_providers() {
+        let store = OidcStateStore::new(Duration::from_secs(300));
+        let google_token = store.generate("google");
+        let github_token = store.generate("github");
+        let azure_token = store.generate("azure-ad");
+
+        assert_eq!(store.validate(&github_token), Some("github".to_string()));
+        assert_eq!(store.validate(&google_token), Some("google".to_string()));
+        assert_eq!(store.validate(&azure_token), Some("azure-ad".to_string()));
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // Helper Function Tests
+    // ══════════════════════════════════════════════════════════
+
+    #[test]
+    fn normalize_reply_returns_message_for_empty() {
+        assert_eq!(
+            normalize_gateway_reply("".to_string()),
+            "Model returned an empty response."
+        );
+    }
+
+    #[test]
+    fn normalize_reply_returns_message_for_whitespace() {
+        assert_eq!(
+            normalize_gateway_reply("   \n\t  ".to_string()),
+            "Model returned an empty response."
+        );
+    }
+
+    #[test]
+    fn normalize_reply_passes_through_normal_text() {
+        let reply = "Hello, I'm your assistant.".to_string();
+        assert_eq!(normalize_gateway_reply(reply.clone()), reply);
+    }
+
+    #[test]
+    fn normalize_reply_preserves_unicode() {
+        let reply = "Hallo! 🦀 Guten Tag.".to_string();
+        assert_eq!(normalize_gateway_reply(reply.clone()), reply);
+    }
+
+    #[test]
+    fn webhook_memory_key_has_uuid_format() {
+        let key = webhook_memory_key();
+        assert!(key.starts_with("webhook_msg_"));
+        // UUID v4 format: 8-4-4-4-12 hex chars
+        let uuid_part = &key["webhook_msg_".len()..];
+        assert_eq!(uuid_part.len(), 36);
+        assert_eq!(uuid_part.chars().filter(|c| *c == '-').count(), 4);
+    }
+
+    #[test]
+    fn webhook_memory_keys_are_unique() {
+        let k1 = webhook_memory_key();
+        let k2 = webhook_memory_key();
+        assert_ne!(k1, k2);
+    }
+
+    #[test]
+    fn whatsapp_memory_key_format() {
+        let msg = crate::channels::traits::ChannelMessage {
+            id: "msg123".to_string(),
+            sender: "4915123456789".to_string(),
+            content: "Hello".to_string(),
+            channel: "whatsapp".to_string(),
+            timestamp: 0,
+        };
+        let key = whatsapp_memory_key(&msg);
+        assert_eq!(key, "whatsapp_4915123456789_msg123");
+    }
+
+    #[test]
+    fn client_key_from_empty_headers() {
+        let headers = HeaderMap::new();
+        let key = client_key_from_headers(&headers);
+        assert!(!key.is_empty());
+    }
+
+    #[test]
+    fn client_key_from_forwarded_header() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", HeaderValue::from_static("192.168.1.1"));
+        let key = client_key_from_headers(&headers);
+        assert!(key.contains("192.168.1.1"));
+    }
+
+    #[test]
+    fn constants_are_reasonable() {
+        assert!(MAX_BODY_SIZE >= 1024, "Body limit too small");
+        assert!(MAX_BODY_SIZE <= 128 * 1024 * 1024, "Body limit unreasonably large");
+        assert!(REQUEST_TIMEOUT_SECS >= 5, "Timeout too short");
+        assert!(REQUEST_TIMEOUT_SECS <= 300, "Timeout too long");
+        assert!(RATE_LIMIT_WINDOW_SECS >= 1, "Rate window too short");
     }
 }

@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: EUPL-1.2
+// Copyright (c) 2026 Benjamin Küttner <benjamin.kuettner@icloud.com>
+// Patent Pending — DE Gebrauchsmuster, filed 2026-02-23
+
 pub mod browser;
 pub mod browser_open;
 pub mod composio;
@@ -10,7 +14,9 @@ pub mod image_info;
 pub mod memory_forget;
 pub mod memory_recall;
 pub mod memory_store;
+pub mod pim;
 pub mod screenshot;
+pub mod security;
 pub mod shell;
 pub mod traits;
 
@@ -27,15 +33,17 @@ pub use memory_forget::MemoryForgetTool;
 pub use memory_recall::MemoryRecallTool;
 pub use memory_store::MemoryStoreTool;
 pub use screenshot::ScreenshotTool;
+pub use security::SecurityWrapper;
 pub use shell::ShellTool;
 pub use traits::Tool;
 #[allow(unused_imports)]
 pub use traits::{ToolResult, ToolSpec};
 
 use crate::config::DelegateAgentConfig;
+use crate::memory::sovereign::SensitivityScanner;
 use crate::memory::Memory;
 use crate::runtime::{NativeRuntime, RuntimeAdapter};
-use crate::security::SecurityPolicy;
+use crate::security::{AuditLogger, SecurityPolicy};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -49,11 +57,16 @@ pub fn default_tools_with_runtime(
     security: Arc<SecurityPolicy>,
     runtime: Arc<dyn RuntimeAdapter>,
 ) -> Vec<Box<dyn Tool>> {
-    vec![
+    let tools: Vec<Box<dyn Tool>> = vec![
         Box::new(ShellTool::new(security.clone(), runtime)),
         Box::new(FileReadTool::new(security.clone())),
-        Box::new(FileWriteTool::new(security)),
-    ]
+        Box::new(FileWriteTool::new(security.clone())),
+    ];
+
+    tools
+        .into_iter()
+        .map(|t| Box::new(SecurityWrapper::new(t, security.clone())) as Box<dyn Tool>)
+        .collect()
 }
 
 /// Create full tool registry including memory tools and optional Composio
@@ -67,6 +80,9 @@ pub fn all_tools(
     workspace_dir: &std::path::Path,
     agents: &HashMap<String, DelegateAgentConfig>,
     fallback_api_key: Option<&str>,
+    extra_tools: Vec<Box<dyn Tool>>,
+    audit: Option<Arc<AuditLogger>>,
+    actor_name: Option<String>,
 ) -> Vec<Box<dyn Tool>> {
     all_tools_with_runtime(
         security,
@@ -78,6 +94,9 @@ pub fn all_tools(
         workspace_dir,
         agents,
         fallback_api_key,
+        extra_tools,
+        audit,
+        actor_name,
     )
 }
 
@@ -93,6 +112,9 @@ pub fn all_tools_with_runtime(
     workspace_dir: &std::path::Path,
     agents: &HashMap<String, DelegateAgentConfig>,
     fallback_api_key: Option<&str>,
+    extra_tools: Vec<Box<dyn Tool>>,
+    audit: Option<Arc<AuditLogger>>,
+    actor_name: Option<String>,
 ) -> Vec<Box<dyn Tool>> {
     let mut tools: Vec<Box<dyn Tool>> = vec![
         Box::new(ShellTool::new(security.clone(), runtime)),
@@ -146,13 +168,40 @@ pub fn all_tools_with_runtime(
 
     // Add delegation tool when agents are configured
     if !agents.is_empty() {
-        tools.push(Box::new(DelegateTool::new(
-            agents.clone(),
-            fallback_api_key.map(String::from),
-        )));
+        tools.push(Box::new(
+            DelegateTool::new(
+                agents.clone(),
+                fallback_api_key.map(String::from),
+                Arc::new(SensitivityScanner::new()),
+                audit,
+            )
+            .with_actor(actor_name),
+        ));
     }
 
-    tools
+    // Add PIM tools (calendar, contacts, notes) — encrypted at rest
+    let pim_secrets = {
+        let mymolt_dir = workspace_dir.join(".mymolt");
+        Some(crate::security::secrets::SecretStore::new(
+            &mymolt_dir,
+            true,
+        ))
+    };
+    tools.extend(pim::pim_tools(workspace_dir, pim_secrets));
+
+    // Add MCP tools (already gated by SigilGatekeeper, no extra SecurityWrapper needed)
+    let mcp_count = extra_tools.len();
+    let mut wrapped: Vec<Box<dyn Tool>> = tools
+        .into_iter()
+        .map(|t| Box::new(SecurityWrapper::new(t, security.clone())) as Box<dyn Tool>)
+        .collect();
+    wrapped.extend(extra_tools);
+
+    if mcp_count > 0 {
+        tracing::info!(count = mcp_count, "MCP tools added to registry");
+    }
+
+    wrapped
 }
 
 #[cfg(test)]
@@ -176,8 +225,15 @@ mod tests {
             backend: "markdown".into(),
             ..MemoryConfig::default()
         };
+        let audit = Arc::new(
+            crate::security::AuditLogger::new(
+                crate::config::AuditConfig::default(),
+                tmp.path().to_path_buf(),
+            )
+            .unwrap(),
+        );
         let mem: Arc<dyn Memory> =
-            Arc::from(crate::memory::create_memory(&mem_cfg, tmp.path(), None).unwrap());
+            Arc::from(crate::memory::create_memory(&mem_cfg, tmp.path(), None, audit).unwrap());
 
         let browser = BrowserConfig {
             enabled: false,
@@ -196,6 +252,9 @@ mod tests {
             tmp.path(),
             &HashMap::new(),
             None,
+            Vec::new(),
+            None,
+            None,
         );
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
         assert!(!names.contains(&"browser_open"));
@@ -209,8 +268,15 @@ mod tests {
             backend: "markdown".into(),
             ..MemoryConfig::default()
         };
+        let audit = Arc::new(
+            crate::security::AuditLogger::new(
+                crate::config::AuditConfig::default(),
+                tmp.path().to_path_buf(),
+            )
+            .unwrap(),
+        );
         let mem: Arc<dyn Memory> =
-            Arc::from(crate::memory::create_memory(&mem_cfg, tmp.path(), None).unwrap());
+            Arc::from(crate::memory::create_memory(&mem_cfg, tmp.path(), None, audit).unwrap());
 
         let browser = BrowserConfig {
             enabled: true,
@@ -228,6 +294,9 @@ mod tests {
             &http,
             tmp.path(),
             &HashMap::new(),
+            None,
+            Vec::new(),
+            None,
             None,
         );
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
@@ -336,8 +405,15 @@ mod tests {
             backend: "markdown".into(),
             ..MemoryConfig::default()
         };
+        let audit = Arc::new(
+            crate::security::AuditLogger::new(
+                crate::config::AuditConfig::default(),
+                tmp.path().to_path_buf(),
+            )
+            .unwrap(),
+        );
         let mem: Arc<dyn Memory> =
-            Arc::from(crate::memory::create_memory(&mem_cfg, tmp.path(), None).unwrap());
+            Arc::from(crate::memory::create_memory(&mem_cfg, tmp.path(), None, audit).unwrap());
 
         let browser = BrowserConfig::default();
         let http = crate::config::HttpRequestConfig::default();
@@ -364,6 +440,9 @@ mod tests {
             tmp.path(),
             &agents,
             Some("sk-test"),
+            Vec::new(),
+            None,
+            None,
         );
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
         assert!(names.contains(&"delegate"));
@@ -377,8 +456,15 @@ mod tests {
             backend: "markdown".into(),
             ..MemoryConfig::default()
         };
+        let audit = Arc::new(
+            crate::security::AuditLogger::new(
+                crate::config::AuditConfig::default(),
+                tmp.path().to_path_buf(),
+            )
+            .unwrap(),
+        );
         let mem: Arc<dyn Memory> =
-            Arc::from(crate::memory::create_memory(&mem_cfg, tmp.path(), None).unwrap());
+            Arc::from(crate::memory::create_memory(&mem_cfg, tmp.path(), None, audit).unwrap());
 
         let browser = BrowserConfig::default();
         let http = crate::config::HttpRequestConfig::default();
@@ -391,6 +477,9 @@ mod tests {
             &http,
             tmp.path(),
             &HashMap::new(),
+            None,
+            Vec::new(),
+            None,
             None,
         );
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();

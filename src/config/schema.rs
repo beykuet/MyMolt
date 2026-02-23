@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: EUPL-1.2
+// Copyright (c) 2026 Benjamin Küttner <benjamin.kuettner@icloud.com>
+// Patent Pending — DE Gebrauchsmuster, filed 2026-02-23
+
 use crate::security::AutonomyLevel;
 use anyhow::{Context, Result};
 use directories::UserDirs;
@@ -93,6 +97,124 @@ pub struct Config {
     /// Security configuration (sandboxing, resource limits, audit logging)
     #[serde(default)]
     pub security: SecurityConfig,
+
+    #[serde(default)]
+    pub stt: SttConfig,
+
+    /// MCP (Model Context Protocol) server connections
+    #[serde(default)]
+    pub mcp: McpConfig,
+
+    /// Family mode: register multiple users with per-channel role mapping.
+    #[serde(default)]
+    pub family: FamilyConfig,
+}
+
+// ── Speech-to-Text ──────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SttConfig {
+    /// STT provider: "openai" (default)
+    #[serde(default = "default_stt_provider")]
+    pub provider: String,
+
+    /// Model name (e.g. "whisper-1")
+    #[serde(default)]
+    pub model: Option<String>,
+}
+
+fn default_stt_provider() -> String {
+    "openai".into()
+}
+
+// ── Family ──────────────────────────────────────────────────────
+
+/// Family configuration: register family members with per-channel roles.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FamilyConfig {
+    /// Maximum number of family members (default: 8).
+    #[serde(default = "default_family_max_members")]
+    pub max_members: usize,
+
+    /// Registered family members.
+    #[serde(default)]
+    pub members: Vec<FamilyMemberConfig>,
+}
+
+impl Default for FamilyConfig {
+    fn default() -> Self {
+        Self {
+            max_members: default_family_max_members(),
+            members: Vec::new(),
+        }
+    }
+}
+
+fn default_family_max_members() -> usize {
+    8
+}
+
+/// A single family member's config entry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FamilyMemberConfig {
+    /// Display name (e.g. "Benjamin", "Oma Helga").
+    pub name: String,
+
+    /// Role: "root", "adult", "senior", "child".
+    #[serde(default = "default_family_role")]
+    pub role: String,
+
+    /// Channel bindings: `{ "telegram": "12345678", "whatsapp": "+49..." }`.
+    #[serde(default)]
+    pub channels: std::collections::HashMap<String, String>,
+}
+
+fn default_family_role() -> String {
+    "adult".into()
+}
+
+impl Default for SttConfig {
+    fn default() -> Self {
+        Self {
+            provider: default_stt_provider(),
+            model: None,
+        }
+    }
+}
+
+// ── MCP (Model Context Protocol) ────────────────────────────────
+
+/// Configuration for a single MCP server.
+///
+/// ```toml
+/// [[mcp.servers]]
+/// name = "filesystem"
+/// command = "npx"
+/// args = ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpServerConfig {
+    /// Human-readable name for this server
+    pub name: String,
+    /// Command to spawn the MCP server
+    pub command: String,
+    /// Arguments to pass to the command
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// Additional environment variables
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+}
+
+/// MCP configuration — declares MCP servers to connect to.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct McpConfig {
+    /// Enable MCP integration (default: true if servers are configured)
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// List of MCP servers to connect to on startup
+    #[serde(default)]
+    pub servers: Vec<McpServerConfig>,
 }
 
 // ── Identity (AIEOS / OpenClaw format) ──────────────────────────
@@ -108,7 +230,7 @@ pub struct IdentityConfig {
     /// Inline AIEOS JSON (alternative to file path)
     #[serde(default)]
     pub aieos_inline: Option<String>,
-    
+
     /// List of configured OIDC providers (e.g. ID Austria, SPID)
     #[serde(default)]
     pub providers: Vec<OIDCProviderConfig>,
@@ -132,6 +254,13 @@ pub struct OIDCProviderConfig {
     /// e.g. "sub" -> "id", "email" -> "email"
     #[serde(default)]
     pub mapping: HashMap<String, String>,
+    /// Trust level matching Identity bindings: 1=Low, 2=Medium, 3=High
+    #[serde(default = "default_oidc_trust_level")]
+    pub trust_level: u8,
+}
+
+fn default_oidc_trust_level() -> u8 {
+    1
 }
 
 fn default_identity_format() -> String {
@@ -1014,6 +1143,78 @@ pub struct SecurityConfig {
     /// Audit logging configuration
     #[serde(default)]
     pub audit: AuditConfig,
+
+    /// List of enabled skills (whitelist behavior if configured)
+    #[serde(default = "default_enabled_skills")]
+    pub enabled_skills: Vec<String>,
+
+    /// List of disabled skills (blacklist behavior)
+    #[serde(default = "default_disabled_skills")]
+    pub disabled_skills: Vec<String>,
+
+    /// Map of tool actions to confirmation policy ("always", "never", "risky_only")
+    #[serde(default = "default_confirmation_policy")]
+    pub confirmation_required: std::collections::HashMap<String, String>,
+
+    /// SIGIL trust requirements per capability
+    #[serde(default)]
+    pub trust: TrustConfig,
+}
+
+/// Trust level requirements for different capabilities.
+///
+/// ```yaml
+/// security:
+///   trust:
+///     shell: "low"
+///     delegation: "high"
+///     vault: "high"
+///     mcp: "low"
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrustConfig {
+    /// Trust level required for shell commands ("low" or "high")
+    #[serde(default = "default_trust_low")]
+    pub shell: String,
+    /// Trust level required for agent delegation ("low" or "high")
+    #[serde(default = "default_trust_high")]
+    pub delegation: String,
+    /// Trust level required for vault/secret access ("low" or "high")
+    #[serde(default = "default_trust_high")]
+    pub vault: String,
+    /// Trust level required for MCP tool calls ("low" or "high")
+    #[serde(default = "default_trust_low")]
+    pub mcp: String,
+}
+
+fn default_trust_low() -> String {
+    "low".into()
+}
+
+fn default_trust_high() -> String {
+    "high".into()
+}
+
+impl Default for TrustConfig {
+    fn default() -> Self {
+        Self {
+            shell: "low".into(),
+            delegation: "high".into(),
+            vault: "high".into(),
+            mcp: "low".into(),
+        }
+    }
+}
+
+impl TrustConfig {
+    /// Parse a trust string to TrustLevel.
+    pub fn parse_level(s: &str) -> crate::identity::soul::TrustLevel {
+        match s.to_lowercase().as_str() {
+            "high" | "3" => crate::identity::soul::TrustLevel::High,
+            "medium" | "2" => crate::identity::soul::TrustLevel::Medium,
+            _ => crate::identity::soul::TrustLevel::Low,
+        }
+    }
 }
 
 impl Default for SecurityConfig {
@@ -1022,6 +1223,10 @@ impl Default for SecurityConfig {
             sandbox: SandboxConfig::default(),
             resources: ResourceLimitsConfig::default(),
             audit: AuditConfig::default(),
+            enabled_skills: default_enabled_skills(),
+            disabled_skills: default_disabled_skills(),
+            confirmation_required: default_confirmation_policy(),
+            trust: TrustConfig::default(),
         }
     }
 }
@@ -1168,18 +1373,44 @@ impl Default for AuditConfig {
 
 // ── Config impl ──────────────────────────────────────────────────
 
+fn default_enabled_skills() -> Vec<String> {
+    vec![
+        "file_read".into(),
+        "browser_open".into(),
+        "screenshot".into(),
+        "memory_recall".into(),
+        "memory_store".into(),
+        "image_info".into(),
+    ]
+}
+
+fn default_disabled_skills() -> Vec<String> {
+    vec![
+        "file_delete".into(),
+        "terminal".into(),
+        "email_send".into(),
+        "github_write".into(),
+    ]
+}
+
+fn default_confirmation_policy() -> std::collections::HashMap<String, String> {
+    let mut m = std::collections::HashMap::new();
+    m.insert("email_send".into(), "always".into());
+    m.insert("file_write".into(), "always".into());
+    m.insert("file_delete".into(), "always".into());
+    m.insert("terminal_execute".into(), "always".into());
+    m.insert("external_api_call".into(), "always".into());
+    m
+}
+
 impl Default for Config {
     fn default() -> Self {
-        let home =
-            UserDirs::new().map_or_else(|| PathBuf::from("."), |u| u.home_dir().to_path_buf());
-        let mymolt_dir = home.join(".mymolt");
-
         Self {
-            workspace_dir: mymolt_dir.join("workspace"),
-            config_path: mymolt_dir.join("config.toml"),
+            workspace_dir: PathBuf::new(),
+            config_path: PathBuf::new(),
             api_key: None,
-            default_provider: Some("openrouter".to_string()),
-            default_model: Some("anthropic/claude-sonnet-4".to_string()),
+            default_provider: Some("gemini".to_string()),
+            default_model: Some("gemini-2.0-flash".to_string()),
             default_temperature: 0.7,
             observability: ObservabilityConfig::default(),
             autonomy: AutonomyConfig::default(),
@@ -1197,8 +1428,11 @@ impl Default for Config {
             http_request: HttpRequestConfig::default(),
             identity: IdentityConfig::default(),
             hardware: crate::hardware::HardwareConfig::default(),
-            agents: HashMap::new(),
+            agents: std::collections::HashMap::new(),
             security: SecurityConfig::default(),
+            stt: SttConfig::default(),
+            mcp: McpConfig::default(),
+            family: FamilyConfig::default(),
         }
     }
 }
@@ -1290,8 +1524,7 @@ impl Config {
         }
 
         // Gateway host: MYMOLT_GATEWAY_HOST or HOST
-        if let Ok(host) = std::env::var("MYMOLT_GATEWAY_HOST").or_else(|_| std::env::var("HOST"))
-        {
+        if let Ok(host) = std::env::var("MYMOLT_GATEWAY_HOST").or_else(|_| std::env::var("HOST")) {
             if !host.is_empty() {
                 self.gateway.host = host;
             }
@@ -1426,12 +1659,13 @@ mod tests {
     #[test]
     fn config_default_has_sane_values() {
         let c = Config::default();
-        assert_eq!(c.default_provider.as_deref(), Some("openrouter"));
-        assert!(c.default_model.as_deref().unwrap().contains("claude"));
+        assert_eq!(c.default_provider.as_deref(), Some("gemini"));
+        assert!(c.default_model.as_deref().unwrap().contains("gemini"));
         assert!((c.default_temperature - 0.7).abs() < f64::EPSILON);
         assert!(c.api_key.is_none());
-        assert!(c.workspace_dir.to_string_lossy().contains("workspace"));
-        assert!(c.config_path.to_string_lossy().contains("config.toml"));
+        // workspace_dir and config_path are empty in Default; load_or_init sets them.
+        assert_eq!(c.workspace_dir, std::path::PathBuf::new());
+        assert_eq!(c.config_path, std::path::PathBuf::new());
     }
 
     #[test]
@@ -1554,6 +1788,9 @@ mod tests {
             hardware: crate::hardware::HardwareConfig::default(),
             agents: HashMap::new(),
             security: SecurityConfig::default(),
+            stt: SttConfig::default(),
+            mcp: McpConfig::default(),
+            family: FamilyConfig::default(),
         };
 
         let toml_str = toml::to_string_pretty(&config).unwrap();
@@ -1629,6 +1866,9 @@ default_temperature = 0.7
             hardware: crate::hardware::HardwareConfig::default(),
             agents: HashMap::new(),
             security: SecurityConfig::default(),
+            stt: SttConfig::default(),
+            mcp: McpConfig::default(),
+            family: FamilyConfig::default(),
         };
 
         config.save().unwrap();
@@ -1645,8 +1885,7 @@ default_temperature = 0.7
 
     #[test]
     fn config_save_atomic_cleanup() {
-        let dir =
-            std::env::temp_dir().join(format!("mymolt_test_config_{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("mymolt_test_config_{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&dir).unwrap();
 
         let config_path = dir.join("config.toml");

@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: EUPL-1.2
+// Copyright (c) 2026 Benjamin Küttner <benjamin.kuettner@icloud.com>
+// Patent Pending — DE Gebrauchsmuster, filed 2026-02-23
+
 use crate::config::Config;
 use crate::memory::{self, Memory, MemoryCategory};
 use crate::observability::{self, Observer, ObserverEvent};
@@ -569,18 +573,46 @@ pub async fn run(
     };
     let runtime: Arc<dyn runtime::RuntimeAdapter> =
         Arc::from(runtime::create_runtime(&config.runtime)?);
-    let security = Arc::new(SecurityPolicy::from_config(
+    let mut security = SecurityPolicy::from_config(
         &config.autonomy,
+        &config.security,
         &config.workspace_dir,
-    ));
+    );
+
+    // ── SIGIL: Resolve identity from SOUL.md ────────────────────
+    let actor_name;
+    {
+        let mut soul = crate::identity::soul::Soul::new(&config.workspace_dir);
+        if let Ok(()) = soul.load() {
+            let trust = soul.max_trust_level();
+            actor_name = soul.bindings.first().map(|b| format!("{}:{}", b.provider, b.id));
+            tracing::info!(?trust, ?actor_name, bindings = soul.bindings.len(), "SIGIL: Identity resolved from SOUL.md");
+            security.set_trust_level(trust);
+        } else {
+            actor_name = None;
+        }
+    }
+    let security = Arc::new(security);
 
     // ── Memory (the brain) ────────────────────────────────────────
+    let audit = Arc::new(crate::security::AuditLogger::new(
+        config.security.audit.clone(),
+        config.workspace_dir.clone(),
+    )?);
     let mem: Arc<dyn Memory> = Arc::from(memory::create_memory(
         &config.memory,
         &config.workspace_dir,
         config.api_key.as_deref(),
+        Arc::clone(&audit),
     )?);
     tracing::info!(backend = mem.name(), "Memory initialized");
+
+    // ── MCP tools (discover from configured servers) ────────────
+    let mcp_tools = crate::mcp::discover_mcp_tools(
+        &config.mcp,
+        &security,
+        &audit,
+    ).await;
 
     // ── Tools (including memory tools) ────────────────────────────
     let composio_key = if config.composio.enabled {
@@ -598,6 +630,9 @@ pub async fn run(
         &config.workspace_dir,
         &config.agents,
         config.api_key.as_deref(),
+        mcp_tools,
+        Some(Arc::clone(&audit)),
+        actor_name,
     );
 
     // ── Resolve provider ─────────────────────────────────────────
@@ -987,6 +1022,7 @@ I will now call the tool with this payload:
         use crate::security::SecurityPolicy;
         let security = Arc::new(SecurityPolicy::from_config(
             &crate::config::AutonomyConfig::default(),
+            &crate::config::SecurityConfig::default(),
             std::path::Path::new("/tmp"),
         ));
         let tools = tools::default_tools(security);

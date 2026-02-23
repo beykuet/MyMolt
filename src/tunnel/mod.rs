@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: EUPL-1.2
+// Copyright (c) 2026 Benjamin Küttner <benjamin.kuettner@icloud.com>
+// Patent Pending — DE Gebrauchsmuster, filed 2026-02-23
+
 mod cloudflare;
 mod custom;
 mod ngrok;
@@ -129,7 +133,7 @@ pub fn create_tunnel(config: &TunnelConfig) -> Result<Option<Box<dyn Tunnel>>> {
             ))))
         }
 
-        other => bail!("Unknown tunnel provider: \"{other}\". Valid: none, cloudflare, tailscale, ngrok, custom"),
+        other => bail!("Unknown tunnel provider: \"{other}\". Valid: none, cloudflare, tailscale, ngrok, custom, wireguard"),
     }
 }
 
@@ -174,7 +178,7 @@ mod tests {
     #[test]
     fn factory_unknown_provider_errors() {
         let cfg = TunnelConfig {
-            provider: "wireguard".into(),
+            provider: "unknown_fantasy_tunnel".into(),
             ..TunnelConfig::default()
         };
         assert_tunnel_err(&cfg, "Unknown tunnel provider");

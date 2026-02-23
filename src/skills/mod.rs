@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: EUPL-1.2
+// Copyright (c) 2026 Benjamin Küttner <benjamin.kuettner@icloud.com>
+// Patent Pending — DE Gebrauchsmuster, filed 2026-02-23
+
 use anyhow::Result;
 use directories::UserDirs;
 use serde::{Deserialize, Serialize};
@@ -451,6 +455,90 @@ fn copy_dir_recursive(src: &Path, dest: &Path) -> Result<()> {
     Ok(())
 }
 
+pub fn install(source: &str, workspace_dir: &Path) -> Result<()> {
+    let skills_path = skills_dir(workspace_dir);
+    std::fs::create_dir_all(&skills_path)?;
+
+    if source.starts_with("https://") || source.starts_with("http://") {
+        // Git clone
+        let output = std::process::Command::new("git")
+            .args(["clone", "--depth", "1", source])
+            .current_dir(&skills_path)
+            .output()?;
+
+        if output.status.success() {
+            Ok(())
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("Git clone failed: {stderr}");
+        }
+    } else {
+        // Local path — symlink or copy
+        let src = PathBuf::from(source);
+        if !src.exists() {
+            anyhow::bail!("Source path does not exist: {source}");
+        }
+        let name = src.file_name().unwrap_or_default();
+        let dest = skills_path.join(name);
+
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&src, &dest)?;
+        }
+        #[cfg(windows)]
+        {
+            // On Windows, try symlink first (requires admin or developer mode),
+            // fall back to directory junction, then copy
+            use std::os::windows::fs::symlink_dir;
+            if symlink_dir(&src, &dest).is_err() {
+                // Try junction as fallback (works without admin)
+                let junction_result = std::process::Command::new("cmd")
+                    .args(["/C", "mklink", "/J"])
+                    .arg(&dest)
+                    .arg(&src)
+                    .output();
+
+                if junction_result.is_err() || !junction_result.unwrap().status.success() {
+                    // Final fallback: copy the directory
+                    copy_dir_recursive(&src, &dest)?;
+                }
+            }
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            // On other platforms, copy the directory
+            copy_dir_recursive(&src, &dest)?;
+        }
+        Ok(())
+    }
+}
+
+pub fn remove(name: &str, workspace_dir: &Path) -> Result<()> {
+    // Reject path traversal attempts
+    if name.contains("..") || name.contains('/') || name.contains('\\') {
+        anyhow::bail!("Invalid skill name: {name}");
+    }
+
+    let skill_path = skills_dir(workspace_dir).join(name);
+
+    // Verify the resolved path is actually inside the skills directory
+    let canonical_skills = skills_dir(workspace_dir)
+        .canonicalize()
+        .unwrap_or_else(|_| skills_dir(workspace_dir));
+    if let Ok(canonical_skill) = skill_path.canonicalize() {
+        if !canonical_skill.starts_with(&canonical_skills) {
+            anyhow::bail!("Skill path escapes skills directory: {name}");
+        }
+    }
+
+    if !skill_path.exists() {
+        anyhow::bail!("Skill not found: {name}");
+    }
+
+    std::fs::remove_dir_all(&skill_path)?;
+    Ok(())
+}
+
 /// Handle the `skills` CLI command
 #[allow(clippy::too_many_lines)]
 pub fn handle_command(command: crate::SkillCommands, workspace_dir: &Path) -> Result<()> {
@@ -495,125 +583,34 @@ pub fn handle_command(command: crate::SkillCommands, workspace_dir: &Path) -> Re
         }
         crate::SkillCommands::Install { source } => {
             println!("Installing skill from: {source}");
-
-            let skills_path = skills_dir(workspace_dir);
-            std::fs::create_dir_all(&skills_path)?;
-
-            if source.starts_with("https://") || source.starts_with("http://") {
-                // Git clone
-                let output = std::process::Command::new("git")
-                    .args(["clone", "--depth", "1", &source])
-                    .current_dir(&skills_path)
-                    .output()?;
-
-                if output.status.success() {
+            match install(&source, workspace_dir) {
+                Ok(_) => {
                     println!(
                         "  {} Skill installed successfully!",
                         console::style("✓").green().bold()
                     );
                     println!("  Restart `mymolt channel start` to activate.");
-                } else {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    anyhow::bail!("Git clone failed: {stderr}");
+                    Ok(())
                 }
-            } else {
-                // Local path — symlink or copy
-                let src = PathBuf::from(&source);
-                if !src.exists() {
-                    anyhow::bail!("Source path does not exist: {source}");
-                }
-                let name = src.file_name().unwrap_or_default();
-                let dest = skills_path.join(name);
-
-                #[cfg(unix)]
-                {
-                    std::os::unix::fs::symlink(&src, &dest)?;
-                    println!(
-                        "  {} Skill linked: {}",
-                        console::style("✓").green().bold(),
-                        dest.display()
-                    );
-                }
-                #[cfg(windows)]
-                {
-                    // On Windows, try symlink first (requires admin or developer mode),
-                    // fall back to directory junction, then copy
-                    use std::os::windows::fs::symlink_dir;
-                    if symlink_dir(&src, &dest).is_ok() {
-                        println!(
-                            "  {} Skill linked: {}",
-                            console::style("✓").green().bold(),
-                            dest.display()
-                        );
-                    } else {
-                        // Try junction as fallback (works without admin)
-                        let junction_result = std::process::Command::new("cmd")
-                            .args(["/C", "mklink", "/J"])
-                            .arg(&dest)
-                            .arg(&src)
-                            .output();
-
-                        if junction_result.is_ok() && junction_result.unwrap().status.success() {
-                            println!(
-                                "  {} Skill linked (junction): {}",
-                                console::style("✓").green().bold(),
-                                dest.display()
-                            );
-                        } else {
-                            // Final fallback: copy the directory
-                            copy_dir_recursive(&src, &dest)?;
-                            println!(
-                                "  {} Skill copied: {}",
-                                console::style("✓").green().bold(),
-                                dest.display()
-                            );
-                        }
-                    }
-                }
-                #[cfg(not(any(unix, windows)))]
-                {
-                    // On other platforms, copy the directory
-                    copy_dir_recursive(&src, &dest)?;
-                    println!(
-                        "  {} Skill copied: {}",
-                        console::style("✓").green().bold(),
-                        dest.display()
-                    );
+                Err(e) => {
+                    // console::style not available in Err? Just bail.
+                    anyhow::bail!("Install failed: {e}");
                 }
             }
-
-            Ok(())
         }
-        crate::SkillCommands::Remove { name } => {
-            // Reject path traversal attempts
-            if name.contains("..") || name.contains('/') || name.contains('\\') {
-                anyhow::bail!("Invalid skill name: {name}");
+        crate::SkillCommands::Remove { name } => match remove(&name, workspace_dir) {
+            Ok(_) => {
+                println!(
+                    "  {} Skill '{}' removed.",
+                    console::style("✓").green().bold(),
+                    name
+                );
+                Ok(())
             }
-
-            let skill_path = skills_dir(workspace_dir).join(&name);
-
-            // Verify the resolved path is actually inside the skills directory
-            let canonical_skills = skills_dir(workspace_dir)
-                .canonicalize()
-                .unwrap_or_else(|_| skills_dir(workspace_dir));
-            if let Ok(canonical_skill) = skill_path.canonicalize() {
-                if !canonical_skill.starts_with(&canonical_skills) {
-                    anyhow::bail!("Skill path escapes skills directory: {name}");
-                }
+            Err(e) => {
+                anyhow::bail!("Remove failed: {e}");
             }
-
-            if !skill_path.exists() {
-                anyhow::bail!("Skill not found: {name}");
-            }
-
-            std::fs::remove_dir_all(&skill_path)?;
-            println!(
-                "  {} Skill '{}' removed.",
-                console::style("✓").green().bold(),
-                name
-            );
-            Ok(())
-        }
+        },
     }
 }
 

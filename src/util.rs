@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: EUPL-1.2
+// Copyright (c) 2026 Benjamin Küttner <benjamin.kuettner@icloud.com>
+// Patent Pending — DE Gebrauchsmuster, filed 2026-02-23
+
 //! Utility functions for `MyMolt`.
 //!
 //! This module contains reusable helper functions used across the codebase.
@@ -17,7 +21,7 @@
 ///
 /// # Examples
 /// ```
-/// use mymolt::util::truncate_with_ellipsis;
+/// use mymolt_core::util::truncate_with_ellipsis;
 ///
 /// // ASCII string - no truncation needed
 /// assert_eq!(truncate_with_ellipsis("hello", 10), "hello");

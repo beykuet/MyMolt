@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: EUPL-1.2
+// Copyright (c) 2026 Benjamin Küttner <benjamin.kuettner@icloud.com>
+// Patent Pending — DE Gebrauchsmuster, filed 2026-02-23
+
 //! Identity system supporting OpenClaw (markdown) and AIEOS (JSON) formats.
 //!
 //! AIEOS (AI Entity Object Specification) is a standardization framework for
@@ -730,6 +734,7 @@ mod tests {
             format: "aieos".into(),
             aieos_path: Some("identity.json".into()),
             aieos_inline: None,
+            providers: vec![],
         };
         assert!(is_aieos_configured(&config));
     }
@@ -740,6 +745,7 @@ mod tests {
             format: "aieos".into(),
             aieos_path: None,
             aieos_inline: Some("{\"identity\":{}}".into()),
+            providers: vec![],
         };
         assert!(is_aieos_configured(&config));
     }
@@ -750,6 +756,7 @@ mod tests {
             format: "openclaw".into(),
             aieos_path: Some("identity.json".into()),
             aieos_inline: None,
+            providers: vec![],
         };
         assert!(!is_aieos_configured(&config));
     }
@@ -760,6 +767,7 @@ mod tests {
             format: "aieos".into(),
             aieos_path: None,
             aieos_inline: None,
+            providers: vec![],
         };
         assert!(!is_aieos_configured(&config));
     }

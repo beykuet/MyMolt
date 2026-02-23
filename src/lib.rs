@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: EUPL-1.2
+// Copyright (c) 2026 Benjamin Küttner <benjamin.kuettner@icloud.com>
+// Patent Pending — DE Gebrauchsmuster, filed 2026-02-23
+
 #![warn(clippy::all, clippy::pedantic)]
 #![allow(
     clippy::assigning_clones,
@@ -50,12 +54,13 @@ pub mod health;
 pub mod heartbeat;
 pub mod identity;
 pub mod integrations;
+pub mod mcp;
 pub mod memory;
 pub mod migration;
+pub mod network;
 pub mod observability;
 pub mod onboard;
 pub mod providers;
-pub mod network;
 pub mod runtime;
 pub mod security;
 pub mod service;

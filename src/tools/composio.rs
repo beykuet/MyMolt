@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: EUPL-1.2
+// Copyright (c) 2026 Benjamin Küttner <benjamin.kuettner@icloud.com>
+// Patent Pending — DE Gebrauchsmuster, filed 2026-02-23
+
 // Composio Tool Provider — optional managed tool surface with 1000+ OAuth integrations.
 //
 // When enabled, MyMolt can execute actions on Gmail, Notion, GitHub, Slack, etc.

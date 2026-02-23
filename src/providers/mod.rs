@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: EUPL-1.2
+// Copyright (c) 2026 Benjamin Küttner <benjamin.kuettner@icloud.com>
+// Patent Pending — DE Gebrauchsmuster, filed 2026-02-23
+
 pub mod anthropic;
 pub mod compatible;
 pub mod gemini;
@@ -8,6 +12,7 @@ pub mod reliable;
 pub mod router;
 pub mod traits;
 pub mod mock_voice;
+pub mod stt;
 
 #[allow(unused_imports)]
 pub use traits::{ChatMessage, ChatResponse, Provider, ToolCall};
@@ -102,7 +107,7 @@ pub async fn api_error(provider: &str, response: reqwest::Response) -> anyhow::E
 ///
 /// For Anthropic, the provider-specific env var is `ANTHROPIC_OAUTH_TOKEN` (for setup-tokens)
 /// followed by `ANTHROPIC_API_KEY` (for regular API keys).
-fn resolve_api_key(name: &str, api_key: Option<&str>) -> Option<String> {
+pub fn resolve_api_key(name: &str, api_key: Option<&str>) -> Option<String> {
     if let Some(key) = api_key.map(str::trim).filter(|k| !k.is_empty()) {
         return Some(key.to_string());
     }

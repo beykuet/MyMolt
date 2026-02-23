@@ -1,5 +1,9 @@
+// SPDX-License-Identifier: EUPL-1.2
+// Copyright (c) 2026 Benjamin Küttner <benjamin.kuettner@icloud.com>
+// Patent Pending — DE Gebrauchsmuster, filed 2026-02-23
+
 use anyhow::{anyhow, Result};
-use didkit::{DID_METHODS, VerifiablePresentation};
+use didkit::{ContextLoader, DID_METHODS, LinkedDataProofOptions, VerifiablePresentation};
 
 use serde::{Deserialize, Serialize};
 
@@ -15,20 +19,37 @@ pub struct SSIGuardian;
 
 impl SSIGuardian {
     /// Verifies a Verifiable Presentation (VP) string (JSON-LD).
+    ///
+    /// Performs real cryptographic verification using didkit's linked-data
+    /// proof verification pipeline:
+    ///   1. Parse the VP JSON-LD
+    ///   2. Verify all proofs using DID resolution + LD signatures
+    ///   3. Extract holder/issuer DIDs
     pub async fn verify_vp(vp_string: &str) -> Result<VerificationResult> {
         // 1. Parse VP
         let vp: VerifiablePresentation = serde_json::from_str(vp_string)
             .map_err(|e| anyhow!("Failed to parse VP JSON: {}", e))?;
 
-        // 2. Setup Resolver
-        // DID_METHODS is a global static resolver from didkit
-        let _resolver = &*DID_METHODS;
+        // 2. Resolve DIDs using the built-in resolver that covers did:key, did:web, etc.
+        let resolver = &*DID_METHODS;
 
-        // 3. Verify
-        // MVP: Assume valid if it parses (Mock verification for now to unblock build)
-        // TODO: Enable real crypto verification once `ssi` trait bounds are resolved.
-        let is_valid = true; 
-        let mut errors = vec![];
+        // 3. Real cryptographic verification via didkit/ssi linked-data proofs
+        let mut context_loader = ContextLoader::default();
+        let ldp_options = LinkedDataProofOptions::default();
+
+        let ssi_result = vp
+            .verify(Some(ldp_options), resolver, &mut context_loader)
+            .await;
+
+        let is_valid = ssi_result.errors.is_empty();
+        let mut errors: Vec<String> = ssi_result.errors;
+
+        // Append any warnings as informational
+        if !ssi_result.warnings.is_empty() {
+            for w in &ssi_result.warnings {
+                errors.push(format!("warning: {w}"));
+            }
+        }
 
         // 4. Extract DIDs
         let mut issuer_did = None;
@@ -51,7 +72,6 @@ impl SSIGuardian {
                          }
                      },
                      didkit::ssi::vc::CredentialOrJWT::JWT(_) => {
-                         // JWT parsing needed
                          errors.push("JWT credential extraction not yet implemented".into());
                      }
                  }

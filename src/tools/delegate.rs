@@ -1,6 +1,12 @@
+// SPDX-License-Identifier: EUPL-1.2
+// Copyright (c) 2026 Benjamin Küttner <benjamin.kuettner@icloud.com>
+// Patent Pending — DE Gebrauchsmuster, filed 2026-02-23
+
 use super::traits::{Tool, ToolResult};
 use crate::config::DelegateAgentConfig;
+use crate::memory::sovereign::SensitivityScanner;
 use crate::providers::{self, Provider};
+use crate::security::{AuditEvent, AuditEventType, AuditLogger};
 use async_trait::async_trait;
 use serde_json::json;
 use std::collections::HashMap;
@@ -20,18 +26,35 @@ pub struct DelegateTool {
     fallback_api_key: Option<String>,
     /// Depth at which this tool instance lives in the delegation chain.
     depth: u32,
+    /// SIGIL sensitivity scanner — detects and redacts secrets in transit.
+    scanner: Arc<SensitivityScanner>,
+    /// SIGIL audit logger — logs every delegation crossing.
+    audit: Option<Arc<AuditLogger>>,
+    /// Identity of the user who initiated delegation (from SOUL.md).
+    actor_name: Option<String>,
 }
 
 impl DelegateTool {
     pub fn new(
         agents: HashMap<String, DelegateAgentConfig>,
         fallback_api_key: Option<String>,
+        scanner: Arc<SensitivityScanner>,
+        audit: Option<Arc<AuditLogger>>,
     ) -> Self {
         Self {
             agents: Arc::new(agents),
             fallback_api_key,
             depth: 0,
+            scanner,
+            audit,
+            actor_name: None,
         }
+    }
+
+    /// Set the actor name (identity of the delegating user).
+    pub fn with_actor(mut self, name: Option<String>) -> Self {
+        self.actor_name = name;
+        self
     }
 
     /// Create a DelegateTool for a sub-agent (with incremented depth).
@@ -41,11 +64,51 @@ impl DelegateTool {
         agents: HashMap<String, DelegateAgentConfig>,
         fallback_api_key: Option<String>,
         depth: u32,
+        scanner: Arc<SensitivityScanner>,
+        audit: Option<Arc<AuditLogger>>,
     ) -> Self {
         Self {
             agents: Arc::new(agents),
             fallback_api_key,
             depth,
+            scanner,
+            audit,
+            actor_name: None,
+        }
+    }
+
+    /// Log a SIGIL DelegationCrossing audit event.
+    fn log_delegation(
+        &self,
+        agent_name: &str,
+        direction: &str,
+        risk_level: &str,
+        redacted_patterns: &[String],
+    ) {
+        if let Some(audit) = &self.audit {
+            let description = if redacted_patterns.is_empty() {
+                format!("delegate {direction} → {agent_name} [clean]")
+            } else {
+                format!(
+                    "delegate {direction} → {agent_name} [redacted: {}]",
+                    redacted_patterns.join(", ")
+                )
+            };
+            let event = AuditEvent::new(AuditEventType::DelegationCrossing)
+                .with_actor(
+                    "delegate".to_string(),
+                    self.actor_name.clone(),
+                    self.actor_name.clone(),
+                )
+                .with_action(
+                    description,
+                    risk_level.to_string(),
+                    true,
+                    true,
+                );
+            if let Err(e) = audit.log(&event) {
+                tracing::warn!(error = %e, "Failed to log delegation crossing");
+            }
         }
     }
 }
@@ -185,12 +248,25 @@ impl Tool for DelegateTool {
                 }
             };
 
-        // Build the message
+        // ── SIGIL: Outgoing scan ── redact secrets before they reach the sub-agent
         let full_prompt = if context.is_empty() {
             prompt.to_string()
         } else {
             format!("[Context]\n{context}\n\n[Task]\n{prompt}")
         };
+
+        let (safe_prompt, outgoing_redactions) = self.scanner.redact(&full_prompt);
+        let outgoing_risk = if outgoing_redactions.is_empty() {
+            "clean"
+        } else {
+            tracing::warn!(
+                agent = agent_name,
+                patterns = ?outgoing_redactions,
+                "SIGIL: Redacted sensitive data from delegation prompt"
+            );
+            "high"
+        };
+        self.log_delegation(agent_name, "outgoing", outgoing_risk, &outgoing_redactions);
 
         let temperature = agent_config.temperature.unwrap_or(0.7);
 
@@ -199,7 +275,7 @@ impl Tool for DelegateTool {
             Duration::from_secs(DELEGATE_TIMEOUT_SECS),
             provider.chat_with_system(
                 agent_config.system_prompt.as_deref(),
-                &full_prompt,
+                &safe_prompt,
                 &agent_config.model,
                 temperature,
             ),
@@ -231,10 +307,24 @@ impl Tool for DelegateTool {
                     }
                 }
 
+                // ── SIGIL: Incoming scan ── redact secrets in the sub-agent response
+                let (safe_rendered, incoming_redactions) = self.scanner.redact(&rendered);
+                let incoming_risk = if incoming_redactions.is_empty() {
+                    "clean"
+                } else {
+                    tracing::warn!(
+                        agent = agent_name,
+                        patterns = ?incoming_redactions,
+                        "SIGIL: Redacted sensitive data from delegation response"
+                    );
+                    "high"
+                };
+                self.log_delegation(agent_name, "incoming", incoming_risk, &incoming_redactions);
+
                 Ok(ToolResult {
                     success: true,
                     output: format!(
-                        "[Agent '{agent_name}' ({provider}/{model})]\n{rendered}",
+                        "[Agent '{agent_name}' ({provider}/{model})]\n{safe_rendered}",
                         provider = agent_config.provider,
                         model = agent_config.model
                     ),
@@ -283,7 +373,7 @@ mod tests {
 
     #[test]
     fn name_and_schema() {
-        let tool = DelegateTool::new(sample_agents(), None);
+        let tool = DelegateTool::new(sample_agents(), None, Arc::new(SensitivityScanner::new()), None);
         assert_eq!(tool.name(), "delegate");
         let schema = tool.parameters_schema();
         assert!(schema["properties"]["agent"].is_object());
@@ -299,13 +389,13 @@ mod tests {
 
     #[test]
     fn description_not_empty() {
-        let tool = DelegateTool::new(sample_agents(), None);
+        let tool = DelegateTool::new(sample_agents(), None, Arc::new(SensitivityScanner::new()), None);
         assert!(!tool.description().is_empty());
     }
 
     #[test]
     fn schema_lists_agent_names() {
-        let tool = DelegateTool::new(sample_agents(), None);
+        let tool = DelegateTool::new(sample_agents(), None, Arc::new(SensitivityScanner::new()), None);
         let schema = tool.parameters_schema();
         let desc = schema["properties"]["agent"]["description"]
             .as_str()
@@ -315,21 +405,21 @@ mod tests {
 
     #[tokio::test]
     async fn missing_agent_param() {
-        let tool = DelegateTool::new(sample_agents(), None);
+        let tool = DelegateTool::new(sample_agents(), None, Arc::new(SensitivityScanner::new()), None);
         let result = tool.execute(json!({"prompt": "test"})).await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn missing_prompt_param() {
-        let tool = DelegateTool::new(sample_agents(), None);
+        let tool = DelegateTool::new(sample_agents(), None, Arc::new(SensitivityScanner::new()), None);
         let result = tool.execute(json!({"agent": "researcher"})).await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn unknown_agent_returns_error() {
-        let tool = DelegateTool::new(sample_agents(), None);
+        let tool = DelegateTool::new(sample_agents(), None, Arc::new(SensitivityScanner::new()), None);
         let result = tool
             .execute(json!({"agent": "nonexistent", "prompt": "test"}))
             .await
@@ -340,7 +430,7 @@ mod tests {
 
     #[tokio::test]
     async fn depth_limit_enforced() {
-        let tool = DelegateTool::with_depth(sample_agents(), None, 3);
+        let tool = DelegateTool::with_depth(sample_agents(), None, 3, Arc::new(SensitivityScanner::new()), None);
         let result = tool
             .execute(json!({"agent": "researcher", "prompt": "test"}))
             .await
@@ -352,7 +442,7 @@ mod tests {
     #[tokio::test]
     async fn depth_limit_per_agent() {
         // coder has max_depth=2, so depth=2 should be blocked
-        let tool = DelegateTool::with_depth(sample_agents(), None, 2);
+        let tool = DelegateTool::with_depth(sample_agents(), None, 2, Arc::new(SensitivityScanner::new()), None);
         let result = tool
             .execute(json!({"agent": "coder", "prompt": "test"}))
             .await
@@ -363,7 +453,7 @@ mod tests {
 
     #[test]
     fn empty_agents_schema() {
-        let tool = DelegateTool::new(HashMap::new(), None);
+        let tool = DelegateTool::new(HashMap::new(), None, Arc::new(SensitivityScanner::new()), None);
         let schema = tool.parameters_schema();
         let desc = schema["properties"]["agent"]["description"]
             .as_str()
@@ -385,7 +475,7 @@ mod tests {
                 max_depth: 3,
             },
         );
-        let tool = DelegateTool::new(agents, None);
+        let tool = DelegateTool::new(agents, None, Arc::new(SensitivityScanner::new()), None);
         let result = tool
             .execute(json!({"agent": "broken", "prompt": "test"}))
             .await
@@ -396,7 +486,7 @@ mod tests {
 
     #[tokio::test]
     async fn blank_agent_rejected() {
-        let tool = DelegateTool::new(sample_agents(), None);
+        let tool = DelegateTool::new(sample_agents(), None, Arc::new(SensitivityScanner::new()), None);
         let result = tool
             .execute(json!({"agent": "  ", "prompt": "test"}))
             .await
@@ -407,7 +497,7 @@ mod tests {
 
     #[tokio::test]
     async fn blank_prompt_rejected() {
-        let tool = DelegateTool::new(sample_agents(), None);
+        let tool = DelegateTool::new(sample_agents(), None, Arc::new(SensitivityScanner::new()), None);
         let result = tool
             .execute(json!({"agent": "researcher", "prompt": "  \t  "}))
             .await
@@ -418,7 +508,7 @@ mod tests {
 
     #[tokio::test]
     async fn whitespace_agent_name_trimmed_and_found() {
-        let tool = DelegateTool::new(sample_agents(), None);
+        let tool = DelegateTool::new(sample_agents(), None, Arc::new(SensitivityScanner::new()), None);
         // " researcher " with surrounding whitespace — after trim becomes "researcher"
         let result = tool
             .execute(json!({"agent": " researcher ", "prompt": "test"}))

@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: EUPL-1.2
+// Copyright (c) 2026 Benjamin Küttner <benjamin.kuettner@icloud.com>
+// Patent Pending — DE Gebrauchsmuster, filed 2026-02-23
+
 use axum::{
     extract::{State, Json},
     routing::{get, post},
@@ -20,13 +24,128 @@ pub fn router() -> Router<AppState> {
         .route("/api/config/pairing", post(set_pairing_config))
         .route("/api/config/voice_echo", post(set_voice_echo_config))
         .route("/api/config/models", get(get_models))
+        .route("/api/config/models", post(set_model))
         // Identity
         .route("/api/auth/providers", get(get_auth_providers))
         .route("/api/auth/login/{provider_id}", get(handle_oidc_login))
         .route("/api/auth/callback/{provider_id}", get(handle_oidc_callback))
         // SSI
         .route("/api/identity/verify-vp", post(verify_vp_endpoint))
+        
+        // Vault & Security (Root-only)
+        .route("/api/vault", get(get_vault_entries))
+        .route("/api/security/sigil", get(get_sigil_logs))
+
+        // Confirmation flow
+        .route("/api/security/confirm", post(resolve_confirmation))
+        .route("/api/security/confirm/pending", get(get_pending_confirmations))
+
+        // AdBlock (Root/Adult)
+        .route("/api/config/adblock", get(get_adblock_config))
+        .route("/api/config/adblock/toggle", post(toggle_adblock))
+
+        // VPN routes are in vpn.rs (merged via api::routes())
+        
+        // Diary
+        .route("/api/soul/diary", get(get_diary_entries_handler))
+        .route("/api/soul/diary", post(create_diary_entry))
 }
+
+// ── Diary Handlers ────────────────────────────────────────────────
+
+async fn get_diary_entries_handler(user: AuthenticatedUser, State(state): State<AppState>) -> Result<Json<Vec<crate::identity::soul::DiaryEntry>>, (StatusCode, String)> {
+    if user.role == crate::identity::UserRole::Child {
+         return Err((StatusCode::FORBIDDEN, "Children cannot access the diary".into()));
+    }
+    let soul = state.soul.lock().await;
+    // Default limit 50
+    Ok(Json(soul.get_diary_entries(50)))
+}
+
+async fn create_diary_entry(
+    user: AuthenticatedUser, 
+    State(state): State<AppState>, 
+    Json(payload): Json<CreateDiaryEntryRequest>
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    // RBAC: Senior, Adult, and Root can write to diary (Child cannot)
+    if user.role < crate::identity::UserRole::Senior {
+         return Err((StatusCode::FORBIDDEN, "Only Adults/Seniors can update the diary".into()));
+    }
+
+    // Rate limiting: 20 diary writes per minute
+    if !state.rate_limiter.allow_diary("diary_global") {
+        return Err((StatusCode::TOO_MANY_REQUESTS, "Too many diary writes. Please wait.".into()));
+    }
+
+    // Input sanitization: limit length and strip dangerous characters
+    let content = payload.content.trim();
+    if content.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "Diary entry cannot be empty".into()));
+    }
+    if content.len() > 10_000 {
+        return Err((StatusCode::BAD_REQUEST, "Diary entry too long (max 10000 chars)".into()));
+    }
+    // Strip markdown heading syntax that could corrupt SOUL.md structure
+    let sanitized = content
+        .replace("# ", "")
+        .replace("## ", "")
+        .replace("### ", "");
+
+    let mut soul = state.soul.lock().await;
+    
+    soul.append_diary_entry(&sanitized)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        
+    Ok(Json(serde_json::json!({ "success": true })))
+}
+
+// ── Encrypted Memories / Vault ───────────────────────────────────
+
+async fn get_vault_entries(user: AuthenticatedUser, State(state): State<AppState>) -> Result<Json<Vec<VaultEntryMetadata>>, (StatusCode, String)> {
+    if user.role != crate::identity::UserRole::Root {
+        return Err((StatusCode::FORBIDDEN, "Only Root can audit vault".into()));
+    }
+
+    let entries = state.vault.list_entries()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let metadata = entries.into_iter().map(|e| VaultEntryMetadata {
+        id: e.id,
+        description: e.description,
+        created_at: e.created_at,
+        tags: e.tags,
+    }).collect();
+
+    Ok(Json(metadata))
+}
+
+async fn get_sigil_logs(user: AuthenticatedUser, State(state): State<AppState>) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, String)> {
+    if user.role != crate::identity::UserRole::Root {
+        return Err((StatusCode::FORBIDDEN, "Only Root can view Sigil interception logs".into()));
+    }
+
+    // Read the audit log and filter for Sigil interception events
+    let log_path = state.audit.log_path();
+    
+    if !log_path.exists() {
+        return Ok(Json(vec![]));
+    }
+
+    let content = std::fs::read_to_string(log_path)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    
+    let logs: Vec<serde_json::Value> = content.lines()
+        .filter_map(|l| serde_json::from_str(l).ok())
+        .filter(|v: &serde_json::Value| {
+            let event_type = v["event_type"].as_str().unwrap_or("");
+            event_type == "sigil_interception" || (event_type == "SecurityEvent" && v["action"].as_str().unwrap_or("").starts_with("confirm:"))
+        })
+        .collect();
+
+    Ok(Json(logs))
+}
+
+// VPN Handlers are in vpn.rs
 
 // ── Handlers ─────────────────────────────────────────────────────
 
@@ -45,8 +164,7 @@ async fn verify_vp_endpoint(
             if result.is_valid {
                 // Link the DID to the soul
                 if let Some(holder) = &result.holder_did {
-                    let mut soul = state.soul.lock().unwrap();
-                    // SSI is high trust usually
+                    let mut soul = state.soul.lock().await;
                     let _ = soul.add_binding("SSI-Wallet", holder, crate::identity::soul::TrustLevel::High);
                 }
             }
@@ -80,13 +198,14 @@ async fn get_widgets(_user: AuthenticatedUser, State(_state): State<AppState>) -
 }
 
 async fn get_identities(_user: AuthenticatedUser, State(state): State<AppState>) -> Json<Vec<IdentityStatus>> {
-    let soul = state.soul.lock().unwrap();
+    let soul = state.soul.lock().await;
     
     let mut identities: Vec<IdentityStatus> = soul.bindings.iter().map(|b| IdentityStatus {
         provider: b.provider.clone(),
         id: b.id.clone(),
         trust_level: match b.trust_level {
             crate::identity::soul::TrustLevel::High => 3,
+            crate::identity::soul::TrustLevel::Medium => 2,
             crate::identity::soul::TrustLevel::Low => 1,
         },
         linked_at: b.created_at.clone(),
@@ -116,7 +235,7 @@ async fn simulate_identity_link(
     State(state): State<AppState>, 
     Json(payload): Json<SimulateLinkRequest>
 ) -> Json<serde_json::Value> {
-    let mut soul = state.soul.lock().unwrap();
+    let mut soul = state.soul.lock().await;
     
     // Simulate linking
     let level = if payload.provider.to_lowercase().contains("eidas") {
@@ -162,7 +281,7 @@ async fn verify_eidas_upload(
         }));
     }
     
-    let mut soul = state.soul.lock().unwrap();
+    let mut soul = state.soul.lock().await;
     let id_from_cert = format!("DE-{}", uuid::Uuid::new_v4().to_string().chars().take(8).collect::<String>());
 
     if let Err(e) = soul.add_binding("eIDAS", &id_from_cert, crate::identity::soul::TrustLevel::High) {
@@ -180,17 +299,62 @@ async fn verify_eidas_upload(
 // ... imports
 
 async fn get_system_status(_user: AuthenticatedUser, State(state): State<AppState>) -> Json<SystemStatus> {
-    // Mock implementation for MVP
+    use sysinfo::System;
+
+    let mut sys = System::new();
+    sys.refresh_memory();
+    sys.refresh_cpu_all();
+
+    // Real uptime from start instant
+    let uptime = state.started_at.elapsed().as_secs();
+
+    // Real memory: this process's RSS in MB
+    let pid = sysinfo::get_current_pid().ok();
+    let memory_mb = if let Some(pid) = pid {
+        sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[pid]), true);
+        sys.process(pid)
+            .map(|p| (p.memory() / (1024 * 1024)) as u64)
+            .unwrap_or(0)
+    } else {
+        0
+    };
+
+    // Real CPU: global average (percentage)
+    let cpu_usage = sys.global_cpu_usage();
+
     Json(SystemStatus {
         version: env!("CARGO_PKG_VERSION").to_string(),
-        uptime_secs: 1234, // TODO: Real uptime
-        memory_usage_mb: 45, // TODO: Real mem usage
-        cpu_usage_percent: 1.5, // TODO: Real CPU
+        uptime_secs: uptime,
+        memory_usage_mb: memory_mb,
+        cpu_usage_percent: cpu_usage,
         active_agents: 1,
         voice_mode_active: false,
         pairing_enabled: state.pairing.require_pairing(),
         voice_echo_enabled: state.voice_echo_enabled.load(std::sync::atomic::Ordering::Relaxed),
+        adblock_enabled: state.adblock.is_enabled().await,
+        adblock_count: state.adblock.count().await,
     })
+}
+
+async fn get_adblock_config(_user: AuthenticatedUser, State(state): State<AppState>) -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "enabled": state.adblock.is_enabled().await,
+        "count": state.adblock.count().await,
+    }))
+}
+
+async fn toggle_adblock(user: AuthenticatedUser, State(state): State<AppState>, Json(payload): Json<AdBlockToggleRequest>) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    if user.role < crate::identity::UserRole::Adult {
+        return Err((StatusCode::FORBIDDEN, "Only Adults/Root can manage AdBlock".into()));
+    }
+
+    state.adblock.toggle(payload.enabled).await;
+    Ok(Json(serde_json::json!({ "success": true, "enabled": payload.enabled })))
+}
+
+#[derive(serde::Deserialize)]
+struct AdBlockToggleRequest {
+    enabled: bool,
 }
 
 // ... existing handlers
@@ -234,6 +398,7 @@ async fn get_auth_providers(_user: AuthenticatedUser, State(state): State<AppSta
         id: p.id.clone(),
         name: p.name.clone(),
         icon_url: p.icon_url.clone(),
+        trust_level: p.trust_level,
     }).collect();
     Json(providers)
 }
@@ -248,12 +413,11 @@ async fn handle_oidc_login(
 
     let provider = crate::identity::oidc_generic::GenericOIDCProvider::new(config.clone());
     
-    // In a real app, generate a secure random state and store it in a cookie/cache
-    let state_param = "random_state_needs_improvement"; 
-    // This needs to be the actual callback URL reachable by the browser
+    // Generate a cryptographically secure random state token (CSRF protection)
+    let state_param = state.oidc_states.generate(&provider_id);
     let redirect_uri = format!("{}/api/auth/callback/{}", state.public_url.trim_end_matches('/'), provider_id);
 
-    let url = provider.get_login_url(&redirect_uri, state_param).await
+    let url = provider.get_login_url(&redirect_uri, &state_param).await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     Ok(axum::response::Redirect::to(&url))
@@ -264,7 +428,16 @@ async fn handle_oidc_callback(
     axum::extract::Path(provider_id): axum::extract::Path<String>,
     Query(query): Query<OICDCallbackQuery>,
 ) -> Result<axum::response::Redirect, (StatusCode, String)> {
-     let config = state.identity_config.providers.iter()
+    // Validate and consume the state token (single-use, prevents CSRF + replay)
+    let validated_provider = state.oidc_states.validate(&query.state)
+        .ok_or((StatusCode::BAD_REQUEST, "Invalid or expired OIDC state parameter (possible CSRF)".to_string()))?;
+
+    // Verify the state was generated for THIS provider
+    if validated_provider != provider_id {
+        return Err((StatusCode::BAD_REQUEST, "OIDC state mismatch: callback provider does not match login provider".to_string()));
+    }
+
+    let config = state.identity_config.providers.iter()
         .find(|p| p.id == provider_id)
         .ok_or((StatusCode::NOT_FOUND, "Provider not found".to_string()))?;
 
@@ -274,12 +447,13 @@ async fn handle_oidc_callback(
     let user_info = provider.exchange_code(&query.code, &redirect_uri).await
          .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Token exchange failed: {}", e)))?;
 
-    // Link identity
-    let mut soul = state.soul.lock().unwrap();
-    // Use the provider's trust level or default to Low. For now, assume Generic OIDC is Medium/High? 
-    // The plan said "Government OIDC" -> High.
-    // Maybe we should add `trust_level` to OIDCProviderConfig. For now hardcode High for demo.
-    let trust_level = crate::identity::soul::TrustLevel::High; 
+    let trust_level = match config.trust_level {
+        3 => crate::identity::soul::TrustLevel::High,
+        2 => crate::identity::soul::TrustLevel::Medium,
+        1 | _ => crate::identity::soul::TrustLevel::Low,
+    };
+    
+    let mut soul = state.soul.lock().await;
 
     soul.add_binding(&config.name, &user_info.id, trust_level)
          .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to link identity: {}", e)))?;
@@ -289,12 +463,97 @@ async fn handle_oidc_callback(
 }
 
 async fn get_models(_user: AuthenticatedUser, State(state): State<AppState>) -> Json<Vec<ModelInfo>> {
+    let current = state.model.read().await.clone();
+    json_models(current)
+}
+
+fn json_models(current: String) -> Json<Vec<ModelInfo>> {
     Json(vec![
         ModelInfo {
-            id: state.model.clone(),
-            provider: "default".into(),
-            name: state.model.clone(),
-            description: "Active model".into(),
+            id: current.clone(),
+            provider: "active".into(),
+            name: current,
+            description: "Currently Active Model".into(),
+        },
+        ModelInfo {
+            id: "gemini-2.0-flash-exp".into(),
+            provider: "google".into(),
+            name: "Gemini 2.0 Flash".into(),
+            description: "Fastest multimodal model".into(),
+        },
+        ModelInfo {
+            id: "gpt-4o".into(),
+            provider: "openai".into(),
+            name: "GPT-4o".into(),
+            description: "Reliable reasoning".into(),
         }
     ])
+}
+
+async fn set_model(
+    user: AuthenticatedUser,
+    State(state): State<AppState>,
+    Json(payload): Json<SelectModelRequest>
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    if user.role != crate::identity::UserRole::Root {
+         return Err((StatusCode::FORBIDDEN, "Only Root can change models".into()));
+    }
+
+    // Rate limiting: 3 model switches per minute
+    if !state.rate_limiter.allow_model_switch("model_global") {
+        return Err((StatusCode::TOO_MANY_REQUESTS, "Too many model switches. Please wait.".into()));
+    }
+    
+    // Hot-swap: update the model at runtime
+    let mut model = state.model.write().await;
+    let old_model = model.clone();
+    *model = payload.model_id.clone();
+    
+    tracing::info!("Model changed: {} -> {}", old_model, payload.model_id);
+    
+    Ok(Json(serde_json::json!({ 
+        "success": true, 
+        "previous_model": old_model,
+        "current_model": payload.model_id
+    })))
+}
+
+// ── Confirmation Flow ────────────────────────────────────────
+
+async fn resolve_confirmation(
+    user: AuthenticatedUser,
+    State(state): State<AppState>,
+    Json(payload): Json<crate::security::confirmation::ConfirmationResponse>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    // Only Root/Adult can resolve confirmations
+    if user.role < crate::identity::UserRole::Adult {
+        return Err((StatusCode::FORBIDDEN, "Only Adults/Root can resolve confirmations".into()));
+    }
+
+    let resolved = state.confirm_gate.resolve(&payload.id, payload.approved).await;
+
+    if resolved {
+        // Audit the decision
+        let _ = state.audit.log(
+            &crate::security::AuditEvent::new(crate::security::AuditEventType::SecurityEvent)
+                .with_actor("gateway".to_string(), None, None)
+                .with_action(
+                    format!("confirm:{}", payload.id),
+                    if payload.approved { "approved" } else { "denied" }.to_string(),
+                    payload.approved,
+                    true,
+                ),
+        );
+        Ok(Json(serde_json::json!({ "success": true, "resolved": true })))
+    } else {
+        Ok(Json(serde_json::json!({ "success": false, "resolved": false, "error": "Request not found or expired" })))
+    }
+}
+
+async fn get_pending_confirmations(
+    _user: AuthenticatedUser,
+    State(state): State<AppState>,
+) -> Json<serde_json::Value> {
+    let pending = state.confirm_gate.get_pending().await;
+    Json(serde_json::json!({ "pending": pending }))
 }

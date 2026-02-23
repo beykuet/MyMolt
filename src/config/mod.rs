@@ -1,12 +1,17 @@
+// SPDX-License-Identifier: EUPL-1.2
+// Copyright (c) 2026 Benjamin Küttner <benjamin.kuettner@icloud.com>
+// Patent Pending — DE Gebrauchsmuster, filed 2026-02-23
+
 pub mod schema;
 
 #[allow(unused_imports)]
 pub use schema::{
     AuditConfig, AutonomyConfig, BrowserConfig, ChannelsConfig, ComposioConfig, Config,
-    DelegateAgentConfig, DiscordConfig, DockerRuntimeConfig, GatewayConfig, HeartbeatConfig,
-    HttpRequestConfig, IMessageConfig, IdentityConfig, LarkConfig, MatrixConfig, MemoryConfig,
-    ModelRouteConfig, ObservabilityConfig, ReliabilityConfig, ResourceLimitsConfig, RuntimeConfig,
-    SandboxBackend, SandboxConfig, SecretsConfig, SecurityConfig, SlackConfig, TelegramConfig,
+    DelegateAgentConfig, DiscordConfig, DockerRuntimeConfig, FamilyConfig, FamilyMemberConfig,
+    GatewayConfig, HeartbeatConfig, HttpRequestConfig, IMessageConfig, IdentityConfig, LarkConfig,
+    MatrixConfig, McpConfig, McpServerConfig, MemoryConfig, ModelRouteConfig, ObservabilityConfig,
+    ReliabilityConfig, ResourceLimitsConfig, RuntimeConfig, SandboxBackend, SandboxConfig,
+    SecretsConfig, SecurityConfig, SlackConfig, SttConfig, TelegramConfig, TrustConfig,
     TunnelConfig, WebhookConfig,
 };
 
