@@ -1,11 +1,16 @@
 # Rust
 target/
 **/*.rs.bk
+Cargo.lock
 
 # Node
 node_modules/
-frontend/node_modules/
 frontend/dist/
+extension/dist/
+
+# Tauri
+frontend/src-tauri/target/
+frontend/src-tauri/gen/
 
 # System
 .DS_Store
@@ -16,6 +21,14 @@ frontend/dist/
 # MyMolt Data
 database.db
 wallet.json
-network/
-brain/
+audit.log
+*.log
+
+# Build artifacts
+build_error.log
+
+# Legacy
+zero-claw.jpeg
+LICENSE-ZEROCLAW
 config.toml
+.Rhistory

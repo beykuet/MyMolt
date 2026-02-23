@@ -1,29 +1,34 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
 
-:root {
-  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
+@theme {
+  --color-mymolt-primary: #0891b2;
+  --color-mymolt-secondary: #9370DB;
+  --color-mymolt-success: #16a34a;
+  --color-mymolt-warning: #d97706;
+  --color-mymolt-bg: #0f172a; /* Slate 900 for dark mode Versa UI feel */
+  --color-mymolt-glass: rgba(255, 255, 255, 0.05); /* Lighter glass */
+  --color-mymolt-glassBorder: rgba(255, 255, 255, 0.15); /* More subtle border */
+  --color-mymolt-text: #ffffff;
+  --color-mymolt-text-muted: #94a3b8; /* Slate 400 */
 
-  color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
+  --font-sans: 'Outfit', ui-sans-serif, system-ui, sans-serif;
 
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  --animate-pulse-slow: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@layer utilities {
+  .bg-gradient {
+    background: radial-gradient(circle at 10% 20%, rgba(8, 145, 178, 0.15) 0%, transparent 40%),
+      radial-gradient(circle at 90% 80%, rgba(147, 112, 219, 0.15) 0%, transparent 40%);
+    background-color: var(--color-mymolt-bg);
+  }
+
+  .glass-panel {
+    @apply bg-mymolt-glass backdrop-blur-xl border border-mymolt-glassBorder rounded-2xl shadow-2xl;
+  }
 }
 
 body {
-  margin: 0;
-  min-width: 320px;
-  min-height: 100vh;
-  /* background-color: var(--bg-color); */
-}
-
-#root {
-  width: 100%;
+  font-family: var(--font-sans);
+  @apply bg-mymolt-bg text-white overflow-x-hidden;
 }

@@ -6,7 +6,7 @@ use std::time::Instant;
 use tempfile::TempDir;
 
 // We test both backends through the public memory module
-use zeroclaw::memory::{markdown::MarkdownMemory, sqlite::SqliteMemory, Memory, MemoryCategory};
+use mymolt_core::memory::{markdown::MarkdownMemory, sqlite::SqliteMemory, Memory, MemoryCategory, MemoryEntry};
 
 // ── Helpers ────────────────────────────────────────────────────
 
@@ -91,7 +91,7 @@ async fn compare_recall_quality() {
         ("tz", "Timezone is EST, works 9-5", MemoryCategory::Core),
         (
             "proj1",
-            "Working on ZeroClaw AI assistant",
+            "Working on MyMolt AI assistant",
             MemoryCategory::Daily,
         ),
         (
@@ -395,14 +395,14 @@ async fn compare_category_filter() {
         .await
         .unwrap();
 
-    let sq_core = sq.list(Some(&MemoryCategory::Core)).await.unwrap();
-    let sq_daily = sq.list(Some(&MemoryCategory::Daily)).await.unwrap();
-    let sq_conv = sq.list(Some(&MemoryCategory::Conversation)).await.unwrap();
-    let sq_all = sq.list(None).await.unwrap();
+    let sq_core: Vec<MemoryEntry> = sq.list(Some(&MemoryCategory::Core)).await.unwrap();
+    let sq_daily: Vec<MemoryEntry> = sq.list(Some(&MemoryCategory::Daily)).await.unwrap();
+    let sq_conv: Vec<MemoryEntry> = sq.list(Some(&MemoryCategory::Conversation)).await.unwrap();
+    let sq_all: Vec<MemoryEntry> = sq.list(None).await.unwrap();
 
-    let md_core = md.list(Some(&MemoryCategory::Core)).await.unwrap();
-    let md_daily = md.list(Some(&MemoryCategory::Daily)).await.unwrap();
-    let md_all = md.list(None).await.unwrap();
+    let md_core: Vec<MemoryEntry> = md.list(Some(&MemoryCategory::Core)).await.unwrap();
+    let md_daily: Vec<MemoryEntry> = md.list(Some(&MemoryCategory::Daily)).await.unwrap();
+    let md_all: Vec<MemoryEntry> = md.list(None).await.unwrap();
 
     println!("\n============================================================");
     println!("CATEGORY FILTERING:");

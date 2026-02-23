@@ -1,0 +1,21 @@
+[Unit]
+Description=MyMolt Core Service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+# Adjust if running as non-root (requires CAP_NET_ADMIN for WireGuard)
+# CapabilityBoundingSet=CAP_NET_ADMIN
+# AmbientCapabilities=CAP_NET_ADMIN
+
+WorkingDirectory=/opt/mymolt
+ExecStart=/opt/mymolt/mymolt-core --host 127.0.0.1 --port 3000
+Restart=always
+RestartSec=5
+Environment=RUST_LOG=info
+# Add secrets here or load from file
+# Environment="MYMOLT_WHATSAPP_APP_SECRET=..."
+
+[Install]
+WantedBy=multi-user.target

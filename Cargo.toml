@@ -1,13 +1,14 @@
 [package]
 name = "mymolt-core"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
-authors = ["MyMolt Contributors", "benjaminkuettner"]
+authors = ["Benjamin Kuettner <ben@mymolt.org>"]
 license = "EUPL-1.2"
-description = "MyMolt Core - The sovereign, EU-compliant AI agent infrastructure based on ZeroClaw."
+description = "MyMolt Core — Sovereign AI runtime for families. Self-hosted, Rust-native, EU-compliant."
 repository = "https://github.com/beykuet/MyMolt"
+homepage = "https://mymolt.org"
 readme = "README.md"
-keywords = ["ai", "agent", "privacy", "eidas", "sovereignty"]
+keywords = ["ai", "agent", "privacy", "family", "sovereignty"]
 categories = ["command-line-utilities", "api-bindings"]
 
 [dependencies]
@@ -45,6 +46,12 @@ fantoccini = { version = "0.22.0", optional = true, default-features = false, fe
 # Error handling
 anyhow = "1.0"
 thiserror = "2.0"
+regex = "1.10"
+
+# MCP (Model Context Protocol) client
+# MCP (Model Context Protocol) — implemented using serde_json + tokio (no external SDK needed)
+
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 
 # UUID generation
 uuid = { version = "1.11", default-features = false, features = ["v4", "std"] }
@@ -61,7 +68,7 @@ hex = "0.4"
 landlock = { version = "0.4", optional = true }
 
 # Memory / persistence
-rusqlite = { version = "0.38", features = ["bundled"] }
+rusqlite = { version = "0.30.0", features = ["bundled"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
 cron = "0.12"
 
@@ -86,7 +93,7 @@ webpki-roots = "1.0.6"
 # HTTP server (gateway) — replaces raw TCP for proper HTTP/1.1 compliance
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "query", "ws", "multipart"] }
 tower = { version = "0.5", default-features = false }
-tower-http = { version = "0.6", default-features = false, features = ["cors", "fs", "limit", "timeout"] }
+tower-http = { version = "0.6", default-features = false, features = ["compression-full", "cors", "fs", "limit", "set-header", "timeout", "trace"] }
 http-body-util = "0.1"
 
 # OpenTelemetry — OTLP trace + metrics export
@@ -103,6 +110,20 @@ didkit = "0.6.0"
 ssi = "0.15.0"
 x25519-dalek = { version = "2.0.0", features = ["serde", "static_secrets"] }
 rand_core = { version = "0.6", features = ["std"] }
+zeroize = { version = "1.8", features = ["derive"] }
+qrcode = { version = "0.14.1", features = ["svg"] }
+# Using local path dependencies for development speed and to access internal crates
+hoodik = { path = "../hoodik/hoodik" }
+config = { path = "../hoodik/config", package = "config" }  # The package name is 'config', so we rename it
+context = { path = "../hoodik/context", package = "context" } # The package name is 'context'
+cryptfns = { path = "../hoodik/cryptfns", package = "cryptfns" }
+entity = { path = "../hoodik/entity", package = "entity" }
+util = { path = "../hoodik/util", package = "util" }
+migration = { path = "../hoodik/migration", package = "migration" }
+actix-rt = "2.11.0"
+sigil = { path = "../sigil-protocol/sigil-rs", package = "sigil-protocol" }
+aho-corasick = "1"
+sysinfo = "0.33"
 
 [features]
 default = []
@@ -137,3 +158,4 @@ panic = "abort"
 [dev-dependencies]
 tokio-test = "0.4"
 tempfile = "3.14"
+

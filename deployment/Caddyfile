@@ -1,0 +1,11 @@
+{
+    # email your-email@example.com
+}
+
+# Replace with your domain (e.g., mymolt.org)
+:80 {
+    reverse_proxy localhost:3000
+
+    # Additional security headers (gateway already adds most, but HSTS is good here)
+    header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+}

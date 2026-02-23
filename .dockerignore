@@ -1,0 +1,16 @@
+.git
+.githooks
+target
+docs
+examples
+tests
+*.md
+*.png
+*.db
+*.db-journal
+.DS_Store
+.github
+deny.toml
+LICENSE
+.env
+.tmp_*

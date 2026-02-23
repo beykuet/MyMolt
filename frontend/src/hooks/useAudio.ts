@@ -8,8 +8,9 @@ export function useAudio() {
     const streamRef = useRef<MediaStream | null>(null);
     const animationFrameRef = useRef<number | null>(null);
     const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+    const chunksRef = useRef<Blob[]>([]);
 
-    const startRecording = useCallback(async (onData: (base64: string) => void) => {
+    const startRecording = useCallback(async () => {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             streamRef.current = stream;
@@ -25,22 +26,19 @@ export function useAudio() {
 
             const recorder = new MediaRecorder(stream);
             mediaRecorderRef.current = recorder;
+            chunksRef.current = [];
 
-            recorder.ondataavailable = async (e) => {
+            recorder.ondataavailable = (e) => {
                 if (e.data.size > 0) {
-                    const reader = new FileReader();
-                    reader.onloadend = () => {
-                        const base64 = (reader.result as string).split(',')[1];
-                        onData(base64);
-                    };
-                    reader.readAsDataURL(e.data);
+                    chunksRef.current.push(e.data);
                 }
             };
 
-            recorder.start(250); // Capture in 250ms chunks
+            recorder.start();
             setIsRecording(true);
 
             const updateVolume = () => {
+                if (!analyzer) return;
                 const dataArray = new Uint8Array(analyzer.frequencyBinCount);
                 analyzer.getByteFrequencyData(dataArray);
                 const avg = dataArray.reduce((p, c) => p + c, 0) / dataArray.length;
@@ -54,13 +52,33 @@ export function useAudio() {
         }
     }, []);
 
-    const stopRecording = useCallback(() => {
-        mediaRecorderRef.current?.stop();
-        streamRef.current?.getTracks().forEach(t => t.stop());
-        if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
-        audioContextRef.current?.close();
-        setIsRecording(false);
-        setVolume(0);
+    const stopRecording = useCallback((): Promise<string> => {
+        return new Promise((resolve) => {
+            const recorder = mediaRecorderRef.current;
+            if (!recorder) {
+                resolve('');
+                return;
+            }
+
+            recorder.onstop = () => {
+                const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
+                const reader = new FileReader();
+                reader.onloadend = () => {
+                    const base64 = (reader.result as string).split(',')[1];
+                    resolve(base64);
+                };
+                reader.readAsDataURL(blob);
+
+                // Cleanup
+                streamRef.current?.getTracks().forEach(t => t.stop());
+                if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
+                audioContextRef.current?.close();
+                setIsRecording(false);
+                setVolume(0);
+            };
+
+            recorder.stop();
+        });
     }, []);
 
     const playAudio = useCallback(async (base64: string) => {

@@ -1,0 +1,23 @@
+{
+  "name": "MyMolt — Sovereign Digital Home",
+  "short_name": "MyMolt",
+  "description": "Privacy-first family cloud with AI assistant, VPN, and identity management",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0a0e1a",
+  "theme_color": "#0055d4",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/pwa-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/pwa-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

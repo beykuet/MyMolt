@@ -58,7 +58,7 @@ cargo test telegram --lib
 ### Step 1: Run Automated Tests
 
 ```bash
-cd /Users/abdzsam/zeroclaw
+cd /Users/abdzsam/mymolt
 
 # Make scripts executable (already done)
 chmod +x test_telegram_integration.sh quick_test.sh
@@ -102,10 +102,10 @@ Pass Rate:     100%
 
 ```bash
 # Interactive setup
-zeroclaw onboard --interactive
+mymolt onboard --interactive
 
 # Or channels-only setup
-zeroclaw onboard --channels-only
+mymolt onboard --channels-only
 ```
 
 When prompted:
@@ -116,12 +116,12 @@ When prompted:
 ### Step 3: Verify Health
 
 ```bash
-zeroclaw channel doctor
+mymolt channel doctor
 ```
 
 **Expected output:**
 ```
-🩺 ZeroClaw Channel Doctor
+🩺 MyMolt Channel Doctor
 
   ✅ Telegram  healthy
 
@@ -134,7 +134,7 @@ Summary: 1 healthy, 0 unhealthy, 0 timed out
 
 ```bash
 # Terminal 1: Start the channel
-zeroclaw channel start
+mymolt channel start
 ```
 
 **In Telegram:**
@@ -209,10 +209,10 @@ cargo update
 
 ```bash
 # Check config
-cat ~/.zeroclaw/config.toml | grep -A 5 telegram
+cat ~/.mymolt/config.toml | grep -A 5 telegram
 
 # Reconfigure
-zeroclaw onboard --channels-only
+mymolt onboard --channels-only
 ```
 
 ### Issue: Health check fails
@@ -228,7 +228,7 @@ curl "https://api.telegram.org/bot<YOUR_TOKEN>/getMe"
 
 ```bash
 # Enable debug logging
-RUST_LOG=debug zeroclaw channel start
+RUST_LOG=debug mymolt channel start
 
 # Look for:
 # - "Telegram channel listening for messages..."
@@ -244,11 +244,11 @@ After all fixes, you should see:
 |--------|--------|---------|
 | Unit test pass | 24/24 | `cargo test telegram --lib` |
 | Build time | <30s | `time cargo build --release` |
-| Binary size | ~3-4MB | `ls -lh target/release/zeroclaw` |
-| Health check | <5s | `time zeroclaw channel doctor` |
+| Binary size | ~3-4MB | `ls -lh target/release/mymolt` |
+| Health check | <5s | `time mymolt channel doctor` |
 | First response | <3s | Manual test in Telegram |
 | Message split | <50ms | Check debug logs |
-| Memory usage | <10MB | `ps aux \| grep zeroclaw` |
+| Memory usage | <10MB | `ps aux \| grep mymolt` |
 
 ## 🔄 CI/CD Integration
 
@@ -278,9 +278,9 @@ Add to your workflow:
 
 5. **Monitor logs** for any issues:
    ```bash
-   zeroclaw daemon
+   mymolt daemon
    # or
-   RUST_LOG=info zeroclaw channel start
+   RUST_LOG=info mymolt channel start
    ```
 
 ## 🎉 Success!
@@ -298,6 +298,6 @@ If all tests pass:
 
 ## 📞 Support
 
-- Issues: https://github.com/theonlyhennygod/zeroclaw/issues
+- Issues: https://github.com/beykuet/MyMolt/issues
 - Docs: `./TESTING_TELEGRAM.md`
-- Help: `zeroclaw --help`
+- Help: `mymolt --help`

@@ -1,0 +1,16 @@
+{
+    "bundle": {
+        "iOS": {
+            "developmentTeam": "TEAM_ID_HERE"
+        }
+    },
+    "app": {
+        "windows": [
+            {
+                "title": "MyMolt",
+                "label": "main",
+                "fullscreen": false
+            }
+        ]
+    }
+}

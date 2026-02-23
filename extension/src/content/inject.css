@@ -1,0 +1,64 @@
+/* MyMolt Extension — Injected Styles */
+/* These styles are scoped to MyMolt elements only */
+
+.mymolt-floating-btn {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    width: 48px;
+    height: 48px;
+    border-radius: 16px;
+    background: linear-gradient(135deg, #0055d4, #003da0);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    z-index: 2147483647;
+    box-shadow:
+        0 4px 24px rgba(0, 85, 212, 0.4),
+        0 0 0 1px rgba(255, 255, 255, 0.1) inset;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    opacity: 0.85;
+}
+
+.mymolt-floating-btn:hover {
+    transform: scale(1.08);
+    opacity: 1;
+    box-shadow:
+        0 6px 32px rgba(0, 85, 212, 0.6),
+        0 0 0 1px rgba(255, 255, 255, 0.15) inset;
+}
+
+.mymolt-floating-btn:active {
+    transform: scale(0.95);
+}
+
+/* Vault autofill badge */
+.mymolt-autofill-badge {
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    background: linear-gradient(135deg, #ffcc00, #f59e0b);
+    color: #000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    z-index: 10000;
+    box-shadow: 0 2px 8px rgba(255, 204, 0, 0.3);
+    transition: background 0.3s ease, transform 0.15s ease;
+}
+
+.mymolt-autofill-badge:hover {
+    transform: translateY(-50%) scale(1.1);
+    box-shadow: 0 4px 16px rgba(255, 204, 0, 0.5);
+}
+
+.mymolt-autofill-badge:active {
+    transform: translateY(-50%) scale(0.95);
+}
