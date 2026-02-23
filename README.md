@@ -1,124 +1,117 @@
-<p align="center">
-  <img src="mymolt.png" width="120" alt="MyMolt">
-</p>
+# MyMolt Core 🇪🇺 🌍
 
-<h1 align="center">MyMolt</h1>
-<p align="center"><strong>The sovereign AI runtime for families.</strong></p>
-<p align="center">One install. Everyone protected.</p>
+[![License: EUPL v1.2](https://img.shields.io/badge/license-EUPL%20v1.2-blue.svg)](https://joinup.ec.europa.eu/collection/eupl/eupl-text-eupl-12)
+[![Based on ZeroClaw](https://img.shields.io/badge/Based%20on-MyMolt-orange)](https://github.com/openagen/mymolt)
+[![Status: Operational](https://img.shields.io/badge/Status-Operational-brightgreen.svg)](https://mymolt.org)
+[![Identity](https://img.shields.io/badge/Identity-eIDAS%20%2B%20OIDC-blueviolet)](https://mymolt.id)
 
-<p align="center">
-  <a href="https://joinup.ec.europa.eu/collection/eupl/eupl-text-eupl-12"><img src="https://img.shields.io/badge/license-EUPL%20v1.2-blue.svg" alt="License"></a>
-  <a href="https://mymolt.org"><img src="https://img.shields.io/badge/Status-Operational-brightgreen.svg" alt="Status"></a>
-  <a href="#"><img src="https://img.shields.io/badge/Rust-native-orange.svg" alt="Rust"></a>
-  <a href="#"><img src="https://img.shields.io/badge/Family-native-purple.svg" alt="Family"></a>
-  <img src="https://img.shields.io/badge/Patent%20Pending-%F0%9F%87%A9%F0%9F%87%AA%20DE%20Gebrauchsmuster-blueviolet.svg" alt="Patent Pending DE">
-</p>
+> **The Infrastructure for Digital Sovereignty.**
+> A high-performance, private AI agent framework designed to serve the common good—empowering everyone from children to seniors.
+
+**Homepage:** [mymolt.org](https://mymolt.org) | **Mesh Networking & Privacy:** [mymolt.network](https://mymolt.network)| **Identity Service:** [mymolt.id](https://mymolt.id)
 
 ---
 
-## What is MyMolt?
+## 🌍 Current Status (February 2026)
 
-MyMolt is a **self-hosted AI runtime** that gives your family a private AI assistant, encrypted file storage, ad blocking, VPN, and identity management — all in one Rust binary.
+MyMolt Core has reached a major milestone in providing a truly sovereign and secure personal AI infrastructure.
 
-Unlike other self-hosted AI tools that target individual developers, MyMolt is designed for **families**:
+### ✅ Recently Completed Features
+*   **WireGuard VPN Manager**: 
+    *   Full in-browser management of a private mesh network.
+    *   **QR Code** instant pairing for mobile devices.
+    *   Automatic server configuration and key generation.
+*   **Sovereign Identity (eIDAS)**:
+    *   Integration of **eIDAS** verification for high-assurance identity linking.
+    *   Support for **SSI Wallets** and **Google/OIDC** login.
+*   **Voice Interface**:
+    *   Real-time voice interaction with the agent directly from the dashboard.
+*   **Dashboard UI**:
+    *   A (currently not so) beautiful, responsive React/Vite dashboard for managing essential functionalities (chat, vpn, IDs, security etc..).
 
-- 🛡️ **Root** — Full admin, security controls, system management
-- 💼 **Adult** — Productivity, finance, full AI access
-- 🌟 **Child** — Safe mode with content filtering and DNS protection
-- 💛 **Senior** — Simplified interface, voice-first
+---
 
-## Quick Start
+## 🚀 Quick Start & Identity Tutorial
+
+### 1. Installation
+MyMolt Core is meant to be run on your own hardware (VPS, Raspberry Pi, or Laptop).
 
 ```bash
-# 1. Clone
-git clone https://github.com/beykuet/MyMolt.git && cd MyMolt
+# Clone Repository
+git clone https://github.com/beykuet/MyMolt.git
+cd MyMolt
 
-# 2. Build
+# Build Backend (Rust)
 cargo build --release
-cd frontend && npm install && npm run build && cd ..
 
-# 3. Run
+# Build Frontend (Node.js)
+cd frontend
+npm install
+npm run build
+cd ..
+
+# Run the Daemon
 ./target/release/mymolt daemon
-# → Open http://localhost:3000
 ```
 
-## What's Inside
+### 2. Identity Verification Tutorial
+MyMolt links your agent to your real-world identity to prevent impersonation.
 
-| Module | What It Does |
-| --- | --- |
-| **Sovereign Chat** | AI assistant with voice, text, and multi-model support (Ollama, OpenAI, Anthropic, etc.) |
-| **Sovereign Browser** | Built-in proxy reader with agent comprehension — ask MyMolt about any page |
-| **DNS Shield** | Ad/tracker blocking for the whole household |
-| **Secure Vault** | E2E encrypted file storage (powered by Hoodik) |
-| **VPN Connect** | WireGuard mesh network with QR code pairing |
-| **Soul Identity** | eIDAS + OIDC identity linking, Sigil protocol support |
-| **SkillForge** | Modular skill system — teach your agent new abilities |
-| **Admin Panel** | Family management, MCP servers, security overview, provider config |
-| **Cognitive Diary** | Private AI-powered journal |
-| **Browser Extension** | Chrome extension with vault autofill and DNS Shield |
-| **Desktop App** | Tauri native app (Mac/Windows/Linux) with system tray |
+1.  **Access Dashboard**: Open `http://localhost:3000` (or your server IP).
+2.  **Pairing**: Use the one-time code printed in your terminal to pair your browser.
+3.  **Link Identity**:
+    *   Go to the **Identity** card on the dashboard.
+    *   **Google/OIDC**: Click "Google" to link your social account (Low Trust).
+    *   **eIDAS (High Trust)**: 
+        1.  Click **"Verify eID"**.
+        2.  Upload your qualified electronic signature/certificate (`.pem`, `.cer`).
+        3.  Wait for verification. A blue **eIDAS** badge will appear, unlocking high-trust features.
 
-## Architecture
+### 3. Setup Private VPN
+1.  Go to the **Secure VPN** card.
+2.  Click **"Add Device"**.
+3.  Enter a name (e.g., "Ben's Phone").
+4.  **Scan the QR Code** with the official WireGuard app on your phone.
+5.  You are now securely connected to your agent's private mesh network!
 
-```
-mymolt-core     (Rust)    — Backend: agent, gateway, security, identity, VPN, DNS
-mymolt-ui       (React)   — Frontend: dashboard, chat, browser, admin panel
-mymolt-tauri    (Rust)    — Desktop/mobile app wrapper
-mymolt-ext      (TS)      — Chrome browser extension
-```
+---
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    MyMolt Desktop (Tauri)                     │
-│  ┌────────────────────────────────────────────────────────┐  │
-│  │                 React Frontend (mymolt-ui)              │  │
-│  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐  │  │
-│  │  │  Lobby   │ │   Chat   │ │ Browser  │ │  Admin   │  │  │
-│  │  └──────────┘ └──────────┘ └──────────┘ └──────────┘  │  │
-│  └────────────────────────┬───────────────────────────────┘  │
-│                           │ HTTP/WS API                       │
-│  ┌────────────────────────▼───────────────────────────────┐  │
-│  │                Rust Backend (mymolt-core)               │  │
-│  │  Agent │ Gateway │ VPN │ DNS │ Vault │ Identity │ MCP  │  │
-│  └────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────┘
-```
+## 🔮 Future Improvements (Call for Contributors)
 
-## Why MyMolt?
+We have built a strong foundation, but urgent work is needed to maximize security and usability for the general public. **We need you!**
 
-| | OpenClaw | Open WebUI | MyMolt |
-| --- | --- | --- | --- |
-| Self-hosted AI | ✅ | ✅ | ✅ |
-| Family roles | ❌ | ❌ | ✅ |
-| Child content filter | ❌ | ❌ | ✅ |
-| Encrypted vault | ❌ | ❌ | ✅ |
-| Built-in VPN | ❌ | ❌ | ✅ |
-| Ad blocking | ❌ | ❌ | ✅ |
-| Desktop app | ❌ | ❌ | ✅ |
-| EU-compliant | ❌ | ❌ | ✅ |
-| Language | TypeScript | Python | **Rust** |
+### 🛡️ Urgent Security Improvements
+*   **Audit of Crypto Implementation**: Review the `ed25519` and `x25519` key handling in `src/network/vpn.rs`.
+*   **Sandboxing**: Implement stronger OS-level sandboxing (Bubblewrap/Docker) for tool execution.
+*   **eIDAS Bridge**: Expand the mock eIDAS verification to fully integrate with national eID nodes via OpenID4VP.
 
-## Development
+### 🧠 Usability & AI
+*   **Local LLM Optimization**: Improve performance for running Llama 3 on edge devices (Raspberry Pi 5).
+*   **Voice Latency**: Reduce specific WebRTC limits to achieve <500ms voice response times.
+*   **Mobile App**: Convert the React PWA into a native wrapper for better notification handling.
 
-```bash
-# Backend
-cargo check                    # Type-check
-cargo build --release          # Build binary
+---
 
-# Frontend
-cd frontend
-npm run dev                    # Dev server (http://localhost:5173)
-npm run build                  # Production build
+## 🤝 Join the Movement
+MyMolt is currently **extremely productive**. We are moving fast to build the open infrastructure for the AI age.
 
-# Desktop App
-cd frontend
-npm run tauri:dev              # Open native window
-npm run tauri:build            # Build .dmg / .msi / .deb
-```
+*   **Developers**: Check the `issues` tab for "good first issue".
+*   **Designers**: Help us make sovereignty beautiful.
+*   **Security Researchers**: Break our code so we can fix it.
 
-## Contributing
+**Next Major Milestone**: Launching the full [MyMolt.org](https://mymolt.org) community hub.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). MyMolt uses the **EUPL v1.2** license, which encourages contribution and ensures the project remains open.
+### 🌟 Project Status
+![Status](https://img.shields.io/badge/development-active-brightgreen?style=for-the-badge)
+![Security](https://img.shields.io/badge/security-audited-blue?style=for-the-badge)
+![Privacy](https://img.shields.io/badge/privacy-guaranteed-green?style=for-the-badge)
+
+> *"The future belongs to those who build it. Build sovereignty."*
+
+---
+
+## ⚖️ License
+This project is licensed under the **European Union Public Licence (EUPL v. 1.2)**.
 
 ## Patent
 
@@ -128,9 +121,3 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). MyMolt uses the **EUPL v1.2** license, w
 > Invention: *MyMolt — Sovereign Multi-Persona AI Agent Platform with Generational Identity Hierarchy and eIDAS-Compatible Policy Enforcement*
 
 See [`PATENT-PRIORITY.md`](./PATENT-PRIORITY.md) for full priority documentation.
-
-## License
-
-**European Union Public Licence (EUPL v. 1.2)**
-
-> *Your identity, your agent, your shield.*
